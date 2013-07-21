@@ -76,7 +76,7 @@ module Bitcoin
         if coinbase?
           t['coinbase']  = @script_sig.unpack("H*")[0]
         else # coinbase tx
-          t['scriptSig'] = Bitcoin::Script.new(@script_sig).to_string
+          t['scriptSig'] = Bitcoin::Script.new("", @script_sig).to_string
         end
         t['sequence']  = @sequence.unpack("V")[0] unless @sequence == "\xff\xff\xff\xff"
         t
@@ -87,7 +87,7 @@ module Bitcoin
         if input['coinbase']
           txin.script_sig = [ input['coinbase'] ].pack("H*")
         else
-          txin.script_sig = Script.binary_from_string(input['scriptSig'])
+          txin.script_sig = Script.binary_from_string(input['scriptSig']).join
         end
         txin.sequence = [ input['sequence'] || 0xffffffff ].pack("V")
         txin

@@ -10,8 +10,8 @@ module Bitcoin::Namecoin
 
         # get the hash160 for this hash160, namecoin or pubkey script
         def get_hash160
-          return @chunks[2..-3][0].unpack("H*")[0]  if is_hash160?
-          return @chunks[-3].unpack("H*")[0]        if is_namecoin?
+          return @chunks_script[2..-3][0].unpack("H*")[0]  if is_hash160?
+          return @chunks_script[-3].unpack("H*")[0]        if is_namecoin?
           return Bitcoin.hash160(get_pubkey)        if is_pubkey?
         end
 
@@ -38,24 +38,24 @@ module Bitcoin::Namecoin
         # is namecoin name_new script
         # OP_1 name_hash OP_2DROP <hash160_script>
         def is_name_new?
-          return false  if @chunks.size < 8
-          [-8, -6, -5, -4, -2, -1].map {|i| @chunks[i] } ==
+          return false  if @chunks_script.size < 8
+          [-8, -6, -5, -4, -2, -1].map {|i| @chunks_script[i] } ==
             [OP_1, OP_2DROP, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG]
         end
 
         # is namecoin name_firstupdate script
         # OP_2 name rand value OP_2DROP OP_2DROP <hash160_script>
         def is_name_firstupdate?
-          return false  if @chunks.size < 11
-          [-11, -7, -6, -5, -4, -2, -1].map {|i| @chunks[i] } ==
+          return false  if @chunks_script.size < 11
+          [-11, -7, -6, -5, -4, -2, -1].map {|i| @chunks_script[i] } ==
             [82, OP_2DROP, OP_2DROP, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG]
         end
 
         # is namecoin name_update script
         # OP_3 name value OP_2DROP OP_DROP <hash160_script>
         def is_name_update?
-          return false  if @chunks.size < 10
-          [-10, -7, -6, -5, -4, -2, -1].map {|i| @chunks[i] } ==
+          return false  if @chunks_script.size < 10
+          [-10, -7, -6, -5, -4, -2, -1].map {|i| @chunks_script[i] } ==
             [83, OP_2DROP, OP_DROP, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG]
         end
 
@@ -66,10 +66,10 @@ module Bitcoin::Namecoin
 
         # get the name_hash of a namecoin name_new script
         def get_namecoin_hash
-          return @chunks[-7].hth  if is_name_new?
+          return @chunks_script[-7].hth  if is_name_new?
           if is_name_firstupdate?
-            name = @chunks[-10].to_s.hth
-            rand = @chunks[-9].to_s.hth
+            name = @chunks_script[-10].to_s.hth
+            rand = @chunks_script[-9].to_s.hth
             return Bitcoin.hash160(rand + name)
           end
         rescue
@@ -78,13 +78,13 @@ module Bitcoin::Namecoin
 
         # get the name of a namecoin name_firstupdate or name_update script
         def get_namecoin_name
-          return @chunks[-10]  if is_name_firstupdate?
-          return @chunks[-9]  if is_name_update?
+          return @chunks_script[-10]  if is_name_firstupdate?
+          return @chunks_script[-9]  if is_name_update?
         end
 
         # get the value of a namecoin name_firstupdate or name_update script
         def get_namecoin_value
-          @chunks[-8]  if is_name_firstupdate? || is_name_update?
+          @chunks_script[-8]  if is_name_firstupdate? || is_name_update?
         end
 
         # generate name_new tx for given +name+ and +address+.

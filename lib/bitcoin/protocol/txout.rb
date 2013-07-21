@@ -58,7 +58,7 @@ module Bitcoin
       end
 
       def to_hash(options = {})
-        script = Bitcoin::Script.new(@pk_script)
+        script = Bitcoin::Script.new(@pk_script, "")
         h = { 'value' => "%.8f" % (@value / 100000000.0),
           'scriptPubKey' => script.to_string }
         h["address"] = script.get_address  if script.is_hash160? && options[:with_address]
@@ -67,7 +67,7 @@ module Bitcoin
 
       def self.from_hash(output)
         amount = output['value'].gsub('.','').to_i
-        script = Script.binary_from_string(output['scriptPubKey'])
+        script = Script.binary_from_string(output['scriptPubKey']).join
         new(amount, script)
       end
       # set pk_script and pk_script_length

@@ -12,12 +12,13 @@ describe 'Bitcoin::Script' do
     "76a91417977bca1b6287a5e6559c57ef4b6525e9d7ded688ac",
     "524104573b6e9f3a714440048a7b87d606bcbf9e45b8586e70a67a3665ea720c095658471a523e5d923f3f3e015626e7c900bd08560ddffeb17d33c5b52c96edb875954104039c2f4e413a26901e67ad4adbb6a4759af87bc16c7120459ecc9482fed3dd4a4502947f7b4c7782dcadc2bed513ed14d5e770452b97ae246ac2030f13b80a5141048b0f9d04e495c3c754f8c3c109196d713d0778882ef098f785570ee6043f8c192d8f84df43ebafbcc168f5d95a074dc4010b62c003e560abc163c312966b74b653ae", # multisig 2 of 3
     "5141040ee607b584b36e995f2e96dec35457dbb40845d0ce0782c84002134e816a6b8cbc65e9eed047ae05e10760e4113f690fd49ad73b86b04a1d7813d843f8690ace4104220a78f5f6741bb0739675c2cc200643516b02cfdfda5cba21edeaa62c0f954936b30dfd956e3e99af0a8e7665cff6ac5b429c54c418184c81fbcd4bde4088f552ae", # multisig 1 of 2
-  ].map{|s|[s].pack("H*")}
+  ].map{|s|s.htb}
   PUBKEYS = [
     "04fb0123fe2c399981bc77d522e2ae3268d2ab15e9a84ae49338a4b1db3886a1ea04cdab955d81e9fa1fcb0c062cb9a5af1ad5dd5064f4afcca322402b07030ec2",
     "0423b8161514560bc8638054b6637ab78f400b24e5694ec8061db635d1f28a17902b14dbf4f80780da659ab24f11ded3095c780452a4004c30ab58dffac33d839a",
     "04f43e76afac66bf3927638b6c4f7e324513ce56d2d658ac9d24c420d09993a4464eea6141a68a4748c092ad0e8f4ac29c4a2f661ef4d22b21f20110f42fcd6f6d",
   ]
+
   describe "serialization" do
     it '#to_string' do
       Script.new(SCRIPT[0]).to_string.should ==
@@ -45,12 +46,12 @@ describe 'Bitcoin::Script' do
       Script.from_string( "ff"*(0xffff+1)               ).to_payload[0..4].should == [Script::OP_PUSHDATA4, 0x00, 0x00, 0x01, 0x00].pack("C*")
 
       Script.from_string("16").to_string.should == "16"
-      Script::OP_2_16.include?(Script.from_string("16").chunks.first).should == true
+      Script::OP_2_16.include?(Script.from_string("16").chunks_script.first).should == true
       Script.from_string("16").to_payload.should == "\x60"
       Script.new("\x60").to_string.should == "16"
 
       Script.from_string("0:1:16").to_string.should == "0:1:16"
-      Script::OP_2_16.include?(Script.from_string("0:1:16").chunks.first).should == false
+      Script::OP_2_16.include?(Script.from_string("0:1:16").chunks_script.first).should == false
       Script.from_string("0:1:16").to_payload.should == "\x01\x16"
       Script.new("\x01\x16").to_string.should == "0:1:16"
 
@@ -80,12 +81,13 @@ describe 'Bitcoin::Script' do
 
     it 'Script#binary_from_string' do
       str = Script.new(SCRIPT[0]).to_string
-      Script.binary_from_string(str).unpack("H*")[0].should == SCRIPT[0].unpack("H*")[0]
-      Script.new(Script.binary_from_string(str)).to_string.should == str
 
-      str = Script.new(SCRIPT[1]).to_string
-      Script.binary_from_string(str).unpack("H*")[0].should == SCRIPT[1].unpack("H*")[0]
-      Script.new(Script.binary_from_string(str)).to_string.should == str
+      Script.binary_from_string(str)[0].hth.should == SCRIPT[0].hth
+      Script.new(*Script.binary_from_string(str)).to_string.should == str
+
+      str = Script.new("", SCRIPT[1]).to_string
+      Script.binary_from_string(str)[0].hth.should == SCRIPT[1].hth
+      Script.new(*Script.binary_from_string(str)).to_string.should == str
       # TODO make tests for OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4 cases
 
       string = "2 OP_TOALTSTACK 0 OP_TOALTSTACK OP_TUCK OP_CHECKSIG OP_SWAP OP_HASH160 3cd1def404e12a85ead2b4d3f5f9f817fb0d46ef OP_EQUAL OP_BOOLAND OP_FROMALTSTACK OP_ADD"
@@ -233,14 +235,14 @@ describe 'Bitcoin::Script' do
         Script.from_string("#{PUBKEYS[1]} OP_CHECKSIG").raw
     end
 
-    it "should generate hash160 script" do
-      Script.to_address_script('16Tc7znw2mfpWcqS84vBFfJ7PyoeHaXSz9')
-        .should == ["76a9143be0c2daaabbf3d53e47352c19d1e8f047e2f94188ac"].pack("H*")
-      hash160 = Bitcoin.hash160_from_address('16Tc7znw2mfpWcqS84vBFfJ7PyoeHaXSz9')
-      Script.to_hash160_script(hash160)
-        .should == Script.from_string("OP_DUP OP_HASH160 #{hash160} OP_EQUALVERIFY OP_CHECKSIG").raw
-      Script.to_address_script('mr1jU3Adw2pkvxTLvQA4MKpXB9Dynj9cXF')
-        .should == nil
+    it "should generate hash160/address script" do
+      address = "16Tc7znw2mfpWcqS84vBFfJ7PyoeHaXSz9"
+      Script.to_address_script(address).should == "76a9143be0c2daaabbf3d53e47352c19d1e8f047e2f94188ac".htb
+      hash160 = Bitcoin.hash160_from_address(address)
+      script = Script.to_address_script(address)
+      Script.to_hash160_script(hash160).should == script
+      script.should == Script.from_string("OP_DUP OP_HASH160 #{hash160} OP_EQUALVERIFY OP_CHECKSIG").raw
+      Script.to_address_script('mr1jU3Adw2pkvxTLvQA4MKpXB9Dynj9cXF').should == nil
     end
 
     it "should generate multisig script" do
@@ -257,12 +259,7 @@ describe 'Bitcoin::Script' do
         Script.from_string("OP_HASH160 #{hash160} OP_EQUAL").raw
     end
 
-    it "should determine type for address script" do
-      address = '16Tc7znw2mfpWcqS84vBFfJ7PyoeHaXSz9'
-      hash160 = Bitcoin.hash160_from_address address
-      Script.to_address_script(address).should ==
-        Script.from_string("OP_DUP OP_HASH160 #{hash160} OP_EQUALVERIFY OP_CHECKSIG").raw
-
+    it "should generate p2sh script" do
       address = "3CkxTG25waxsmd13FFgRChPuGYba3ar36B"
       hash160 = Bitcoin.hash160_from_address address
       Script.to_p2sh_script(hash160).should ==
@@ -300,8 +297,7 @@ describe 'Bitcoin::Script' do
   end
 
   it '#run' do
-    script = SCRIPT[1] + SCRIPT[0]
-    Script.new(script).run.should == true
+    Script.new(SCRIPT[1], SCRIPT[0]).run.should == true
 
     Script.from_string("1 OP_DUP OP_DROP 1 OP_EQUAL")
       .run.should == true
@@ -313,6 +309,27 @@ describe 'Bitcoin::Script' do
       .run.should == false
 
     Script.from_string("1 OP_DROP 2").run.should == true
+  end
+
+  it "should not be able to return from script_sig" do
+    # when pk_script and script_sig are passed separately
+    script = Script.from_string("1 OP_EQUAL", "0 OP_RETURN")
+
+    # it should not be possible for the script_sig to make the script return true
+    script.run{true}.should == false
+
+    # even if op_return was still active and returned true
+    class Script; def op_return; @stack = [1]; end; end
+
+    # there's no way the script_sig can do anything but push data to the stack
+    script = Script.from_string("1 OP_EQUAL", "0 OP_RETURN")
+    script.run{true}.should == false
+
+    # just don't do it like this, passing script_sig + pk_script as one string
+    script = Script.from_string("0 OP_RETURN 1 OP_EQUAL")
+    script.run{true}.should == true
+
+    class Script; def op_return; @script_invalid = true; nil; end; end
   end
 
 end

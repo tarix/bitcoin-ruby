@@ -6,7 +6,7 @@ require 'bitcoin/script'
 describe "Bitcoin::Script OPCODES" do
 
   before do
-    @script = Bitcoin::Script.new("")
+    @script = Bitcoin::Script.new()
     @script.class.instance_eval { attr_accessor :stack, :stack_alt }
   end
 
@@ -523,7 +523,7 @@ describe "Bitcoin::Script OPCODES" do
   def run_script(string, hash)
     script = Bitcoin::Script.from_string(string)
     script.run do |pk, sig, hash_type|
-      k = Bitcoin::Key.new nil, pk.unpack("H*")[0]
+      k = Bitcoin::Key.new nil, pk.hth
       k.verify(hash, sig) rescue false
     end == true
   end
@@ -650,13 +650,22 @@ describe "Bitcoin::Script OPCODES" do
 =end
 
   it "should do P2SH" do
-    k1 = Bitcoin::Key.new; k1.generate
-    sig = (k1.sign("foobar") + "\x01").unpack("H*")[0]
-    inner_script = Bitcoin::Script.from_string("#{k1.pub} OP_CHECKSIG").raw.unpack("H*")[0]
+    k1 = Bitcoin::Key.generate
+    sig = (k1.sign("foobar") + "\x01").hth
+    inner_script = Bitcoin::Script.from_string("#{k1.pub} OP_CHECKSIG").raw.hth
     script_hash = Bitcoin.hash160(inner_script)
+
+    # pass script_sig + pk_script in one string
     script = Bitcoin::Script.from_string("#{sig} #{inner_script} OP_HASH160 #{script_hash} OP_EQUAL")
     script.is_p2sh?.should == true
     run_script(script.to_string, "foobar").should == true
+
+    # pass pk_script and script_sig as separate strings
+    script = Bitcoin::Script.from_string("OP_HASH160 #{script_hash} OP_EQUAL", "#{sig} #{inner_script}")
+
+    script.is_p2sh?.should == true
+    run_script(script.to_string, "foobar").should == true
+
     run_script(script.to_string, "barbaz").should == false
 
     script = Bitcoin::Script.from_string("0 #{sig} #{inner_script} OP_HASH160 #{script_hash} OP_EQUAL")

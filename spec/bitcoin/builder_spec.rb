@@ -64,7 +64,7 @@ describe "Bitcoin::Builder" do
 
     tx.in[0].prev_out.reverse_hth.should == block.tx[0].hash
     tx.in[0].prev_out_index.should == 0
-    Bitcoin::Script.new(tx.in[0].script_sig).chunks[1].unpack("H*")[0].should == @keys[0].pub
+    Bitcoin::Script.new("", tx.in[0].script_sig).chunks_sig[1].hth.should == @keys[0].pub
 
     tx.out[0].value.should == 123
     script = Bitcoin::Script.new(tx.out[0].pk_script)
