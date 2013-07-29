@@ -177,6 +177,7 @@ module Bitcoin::Network
     # send +verack+ message and complete handshake
     def on_version(version)
       log.debug { ">> version: #{version.version}" }
+      log.info { "Version: #{version}" }
       @node.external_ips << version.to.split(":")[0]
       @version = version
       log.debug { "<< verack" }

@@ -23,6 +23,19 @@ module Bitcoin
         }.merge( opts.reject{|k,v| v == nil } )
       end
 
+      def to_s
+        "{ "\
+        "version: #{@fields[:version]}; "\
+        "services: #{@fields[:services]}; "\
+        "time: #{@fields[:time]}; "\
+        "from: #{@fields[:from]}; "\
+        "to: #{@fields[:to]}; "\
+        "nonce: #{@fields[:nonce]}; "\
+        "user_agent: #{@fields[:user_agent]}; "\
+        "last_block: #{@fields[:last_block]}; "\
+        "}"
+      end
+
       def to_payload
         payload = [
           @fields.values_at(:version, :services, :time).pack("VQQ"),
