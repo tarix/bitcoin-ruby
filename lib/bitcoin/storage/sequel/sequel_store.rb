@@ -37,13 +37,20 @@ module Bitcoin::Storage::Backends
 
     # connect to database
     def connect
-      {:sqlite => "sqlite3", :postgres => "pg", :mysql => "mysql",
-      }.each do |adapter, name|
-        if @config[:db].split(":").first == adapter.to_s
-          Bitcoin.require_dependency name, gem: name
+      if defined?(RUBY_ENGINE) && RUBY_ENGINE == 'jruby'
+        connection = "jdbc:#{@config[:db].sub("~", ENV["HOME"])}"
+        connection.gsub! "postgres", "postgresql" # fix the difference between MRI and jruby
+      else
+        {:sqlite => "sqlite3", :postgres => "pg", :mysql => "mysql",
+        }.each do |adapter, name|
+          if @config[:db].split(":").first == adapter.to_s
+            Bitcoin.require_dependency name, gem: name
+          end
         end
+        connection = "#{@config[:db].sub("~", ENV["HOME"])}"
       end
-      @db = Sequel.connect(@config[:db].sub("~", ENV["HOME"]))
+      log.info { "Connection: #{connection}" }
+      @db = Sequel.connect(connection)
       @db.extend_datasets(Sequel::Sequel3DatasetMethods)
       log.info { "opened database #{@db.uri}" }
       migrate

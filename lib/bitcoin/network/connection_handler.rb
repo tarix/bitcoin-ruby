@@ -31,7 +31,6 @@ module Bitcoin::Network
       @state = :new
       @version = nil
       @started = nil
-      @port, @host = *Socket.unpack_sockaddr_in(get_peername)  if get_peername
       @lock = Monitor.new
       @last_getblocks = []  # the last few getblocks messages received
     rescue Exception
@@ -42,6 +41,7 @@ module Bitcoin::Network
     # check if connection is wanted, begin handshake if it is, disconnect if not
     def post_init
       if incoming?
+        @port, @host = Socket.unpack_sockaddr_in(get_peername)
         begin_handshake
       end
     rescue Exception
@@ -51,6 +51,7 @@ module Bitcoin::Network
 
     # only called for outgoing connection
     def connection_completed
+      @port, @host = Socket.unpack_sockaddr_in(get_peername)
       begin_handshake
     rescue Exception
       log.fatal { "Error in #connection_completed" }

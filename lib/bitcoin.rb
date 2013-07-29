@@ -1,10 +1,15 @@
 # encoding: ascii-8bit
 # Bitcoin Utils and Network Protocol in Ruby.
 
-require 'digest/sha2'
-require 'digest/rmd160'
-require 'openssl'
-
+# include openssl and crypto components
+if defined?(RUBY_ENGINE) && RUBY_ENGINE == 'jruby'
+  require 'bouncy-castle-java'
+  require 'jruby-openssl'
+else
+  require 'digest/sha2'
+  require 'digest/rmd160'
+  require 'openssl'
+end
 
 module Bitcoin
 

@@ -8,7 +8,11 @@ group :development do
   gem 'ffi'
   gem 'log4r'
   gem 'sequel'
-  gem 'sqlite3'
+  
+  gem 'pg', :platforms => :ruby
+
+  gem 'jbdc-postgres', :platforms => :jruby
+  gem 'jruby-openssl', :platforms => :jruby
 
   gem "rake", ">= 0.8.0"
   gem "bacon", ">= 1.2.0"
