@@ -59,11 +59,12 @@ include Bitcoin::Validation
     end
 
     it "should get locator" do
-      @store.get_locator.should == [
+      @store.get_locator( @store.get_block("0000000098932356a236718829dd9e3eb0f9143317ab921333b1a203de336de4") ).should == [
         "0000000098932356a236718829dd9e3eb0f9143317ab921333b1a203de336de4",
         "000000037b21cac5d30fc6fda2581cf7b2612908aed2abbcc429c45b0557a15f",
         "000000033cc282bc1fa9dcae7a533263fd7fe66490f550d80076433340831604",
-        "00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008"]
+        "00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008",
+        "00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008"] # on short chains the Genesis branch gets duplicated
     end
 
     it "should not store if there is no prev block" do
