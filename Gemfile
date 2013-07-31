@@ -9,10 +9,8 @@ group :development do
   gem 'log4r'
   gem 'sequel'
   
-  gem 'pg', :platforms => :ruby
-
-  gem 'jbdc-postgres', :platforms => :jruby
-  gem 'jruby-openssl', :platforms => :jruby
+  gem 'sqlite3', :platforms => :ruby # required for tests
+  #gem 'pg', :platforms => :ruby
 
   gem "rake", ">= 0.8.0"
   gem "bacon", ">= 1.2.0"
