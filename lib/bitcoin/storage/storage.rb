@@ -44,13 +44,12 @@ module Bitcoin::Storage
 
       attr_reader :log
 
-      def initialize(config = {}, getblocks_callback = nil)
+      def initialize(config = {})
         @config = config
         if @config[:db]
           @config[:db].sub!("~", ENV["HOME"])
           @config[:db].sub!("<network>", Bitcoin.network_name.to_s)
         end
-        @getblocks_callback = getblocks_callback
         @log    = config[:log] || Bitcoin::Storage.log
         @checkpoints = Bitcoin.network[:checkpoints] || {}
       end
@@ -184,9 +183,10 @@ module Bitcoin::Storage
       end
 
       # compute blockchain locator
-      def get_locator(blk)
+      def get_locator(hash)
         have = []
         step = 1
+        blk = get_block(hash)
         while blk
           have << blk.hash
           step.times do

@@ -59,7 +59,7 @@ include Bitcoin::Validation
     end
 
     it "should get locator" do
-      @store.get_locator( @store.get_block("0000000098932356a236718829dd9e3eb0f9143317ab921333b1a203de336de4") ).should == [
+      @store.get_locator( "0000000098932356a236718829dd9e3eb0f9143317ab921333b1a203de336de4" ).should == [
         "0000000098932356a236718829dd9e3eb0f9143317ab921333b1a203de336de4",
         "000000037b21cac5d30fc6fda2581cf7b2612908aed2abbcc429c45b0557a15f",
         "000000033cc282bc1fa9dcae7a533263fd7fe66490f550d80076433340831604",
