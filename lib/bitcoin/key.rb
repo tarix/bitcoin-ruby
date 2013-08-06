@@ -34,7 +34,7 @@ module Bitcoin
     #  Bitcoin::Key.new(nil, pubkey)
     def initialize privkey = nil, pubkey = nil, compressed = false
       @key = Bitcoin.bitcoin_elliptic_curve
-      @pubkey_compressed = compressed
+      @pubkey_compressed = pubkey ? self.class.is_compressed_pubkey?(pubkey) : compressed
       set_priv(privkey)  if privkey
       set_pub(pubkey)  if pubkey
     end
@@ -111,6 +111,19 @@ module Bitcoin
       @key.dsa_verify_asn1(data, sig)
     end
 
+
+    def sign_message(message)
+      Bitcoin.sign_message(priv, pub, message)['signature']
+    end
+
+    def verify_message(signature, message)
+      Bitcoin.verify_message(addr, signature, message)
+    end
+
+    def self.verify_message(address, signature, message)
+      Bitcoin.verify_message(address, signature, message)
+    end
+
     # Thanks to whoever wrote http://pastebin.com/bQtdDzHx
     # for help with compact signatures
     #
@@ -128,12 +141,12 @@ module Bitcoin
       signature = signature_base64.unpack("m0")[0]
       return nil if signature.size != 65
 
-      version = signature.unpack('c')[0]
+      version = signature.unpack('C')[0]
       return nil if version < 27 or version > 34
-
+ 
       compressed = (version >= 31) ? (version -= 4; true) : false
 
-      hash = Bitcoin.bitcoin_byte_hash(Bitcoin::Key.wrap_message_in_magic(data))
+      hash = Bitcoin.bitcoin_signed_message_hash(data)
       pub_hex = Bitcoin::OpenSSL_EC.recover_public_key_from_signature(hash, signature, version-27, compressed)
       return nil unless pub_hex
 
@@ -151,11 +164,6 @@ module Bitcoin
 
     protected
 
-    def self.wrap_message_in_magic(message)
-      # TODO: this will fail horribly on messages with len > 255. It's a cheap implementation of Bitcoin's CDataStream.
-      "\x18Bitcoin Signed Message:\n#{message.length.chr}#{message}"
-    end
-
     # Regenerate public key from the private key.
     def regenerate_pubkey
       return nil unless @key.private_key
@@ -169,8 +177,12 @@ module Bitcoin
 
     # Set +pub+ as the new public key (converting from hex).
     def set_pub(pub)
-      @pubkey_compressed ||= ["02","03"].include?(pub[0..1])
+      @pubkey_compressed ||= self.class.is_compressed_pubkey?(pub)
       @key.public_key = OpenSSL::PKey::EC::Point.from_hex(@key.group, pub)
+    end
+
+    def self.is_compressed_pubkey?(pub)
+      ["02","03"].include?(pub[0..1])
     end
 
   end
