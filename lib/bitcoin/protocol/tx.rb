@@ -202,7 +202,7 @@ module Bitcoin
         outpoint_idx  = @in[in_idx].prev_out_index
         script_sig    = @in[in_idx].script_sig
         script_pubkey = outpoint_tx.out[outpoint_idx].pk_script
-        script = Bitcoin::Script.new(script_pubkey, script_sig)
+        script = Bitcoin::Script.new(script_sig+script_pubkey)
 
         script.run(block_timestamp) do |pubkey, sig, hash_type, drop_sigs, script|
           # this IS the checksig callback, must return true/false
