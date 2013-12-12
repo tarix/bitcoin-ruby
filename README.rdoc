@@ -1,4 +1,4 @@
-= Bitcoin-ruby
+= Bitcoin-ruby {<img src="https://api.travis-ci.org/lian/bitcoin-ruby.png?branch=master" />}[http://travis-ci.org/lian/bitcoin-ruby]
 
 This is a ruby library for interacting with the bitcoin protocol/network.
 
@@ -30,7 +30,7 @@ We assume you already have a ruby 1.9 or 2.0 compatible interpreter and rubygems
 
 if you want to have it available system-wide, just build the gem and install it:
 
- gem build bitcoin-ruby.gemspec && gem install bitcoin-ruby-0.0.1.gem
+ gem build bitcoin-ruby.gemspec && gem install bitcoin-ruby-0.0.2.gem
 
 now you can just call +bitcoin_node+ from anywhere.
 
@@ -44,6 +44,9 @@ intentionally kept to a minimum, so nobody has to install unneeded dependencies.
 * +em-dns+ or +nslookup+ to get peer addrs from DNS seeds
 * +gir_ffi+ for the gui
 * +bacon+ to run the specs
+
+If you would like to install using Bundler, put it in your Gemfile and run bundle install
+ gem 'bitcoin-ruby', git: 'https://github.com/lian/bitcoin-ruby', branch: 'master', require: 'bitcoin'
 
 == Client
 
@@ -236,6 +239,11 @@ The specs can be run with
 or, if you want to run a single spec
 
  ruby spec/bitcoin/bitcoin_spec.rb
+
+To test the postgres/mysql storage backend, create a database and set it as an environment variable:
+
+ echo "create database bitcoin_test" | psql
+ TEST_DB_POSTGRES="postgres:/bitcoin_test" rake bacon
 
 If you make changes to the code or add functionality, please also add specs.
 

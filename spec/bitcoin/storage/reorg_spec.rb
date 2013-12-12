@@ -4,17 +4,30 @@ require_relative '../spec_helper'
 
 include Bitcoin::Builder
 
-describe "reorg" do
+Bitcoin.network = :testnet
+
+Bitcoin::Validation::Block::RETARGET = 10
+
+[
+ [:utxo, :sqlite, index_all_addrs: true],
+ [:sequel, :sqlite], # [:sequel, :postgres],
+ [:utxo, :postgres, index_all_addrs: true],
+ [:sequel, :mysql],
+ [:utxo, :mysql, index_all_addrs: true],
+].compact.each do |options|
+
+  next  unless storage = setup_db(*options)
+
+  describe "reorg (#{options[0]} - #{options[1]})" do
 
   def balance addr
     @store.get_balance(Bitcoin.hash160_from_address(addr))
   end
 
   before do
-    Bitcoin.network = :testnet
-    @store = Bitcoin::Storage.sequel(:db => "sqlite:/")
+    @store = storage
+    @store.reset
     def @store.in_sync?; true; end
-    @store.log.level = :warn
     Bitcoin.network[:proof_of_work_limit] = Bitcoin.encode_compact_bits("ff"*32)
     @key = Bitcoin::Key.generate
     @block0 = create_block "00"*32, false, [], @key
@@ -26,8 +39,6 @@ describe "reorg" do
   it "should retarget" do
     @store.reset
     time = Time.now.to_i - 3000*600
-
-    Bitcoin::Validation::Block::RETARGET = 10
 
     # create genesis block
     block = create_block "00"*32, false, [], @key, 50e8, {time: time}
@@ -126,6 +137,7 @@ describe "reorg" do
   end
 
   it "should reconnect orphans" do
+    next(true.should == true)  if @store.class.name =~ /Utxo/
     blocks = [@block0]
     3.times { blocks << create_block(blocks.last.hash, false) }
 
@@ -180,6 +192,7 @@ describe "reorg" do
     balance("1NiEGXeURREqqMjCvjCeZn6SwEBZ9AdVet").should == 1000000000
     balance("1KXFNhNtrRMfgbdiQeuJqnfD7dR4PhniyJ").should == 0
     balance("1JyMKvPHkrCQd8jQrqTR1rBsAd1VpRhTiE").should == 14000000000
+    Bitcoin.network = :testnet
     class Bitcoin::Validation::Block
       def difficulty
         return true  if Bitcoin.network_name == :testnet3
@@ -188,4 +201,5 @@ describe "reorg" do
     end
   end
 
+end
 end

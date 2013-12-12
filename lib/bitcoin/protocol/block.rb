@@ -58,40 +58,17 @@ module Bitcoin
       # create block from raw binary +data+
       def initialize(data)
         @tx = []
-        #parse_data(data) if data
         parse_data_from_io(data) if data
       end
 
       # parse raw binary data
       def parse_data(data)
-        @ver, @prev_block, @mrkl_root, @time, @bits, @nonce, payload = data.unpack("Va32a32VVVa*")
-        recalc_block_hash
-
-        if (@ver & BLOCK_VERSION_AUXPOW) > 0
-          @aux_pow = AuxPow.new(nil)
-          payload = @aux_pow.parse_data(payload)
-        end
-
-        return  unless payload.size > 0
-
-        tx_size, payload = Protocol.unpack_var_int(payload)
-        (0...tx_size).each{  break if payload == true
-          t = Tx.new(nil)
-          payload = t.parse_data(payload)
-          @tx << t
-        }
-
-        if Bitcoin.network_project == :ppcoin
-          @block_signature, payload = Protocol.unpack_var_string(payload)
-          @block_signature ||= ""
-        end
-
-        @payload = to_payload
-        payload
+        buf = parse_data_from_io(data)
+        buf.eof? ? true : buf.read
       end
 
       # parse raw binary data
-      def parse_data_from_io(buf)
+      def parse_data_from_io(buf, header_only=false)
         buf = buf.is_a?(String) ? StringIO.new(buf) : buf
         @ver, @prev_block, @mrkl_root, @time, @bits, @nonce = buf.read(80).unpack("Va32a32VVV")
         recalc_block_hash
@@ -101,29 +78,29 @@ module Bitcoin
           @aux_pow.parse_data_from_io(buf)
         end
 
-        return if buf.eof?
+        return buf if buf.eof?
 
         tx_size = Protocol.unpack_var_int_from_io(buf)
-        (0...tx_size).each{  break if payload == true
+        @tx_count = tx_size
+        return buf if header_only
+
+        tx_size.times{  break if payload == true
           t = Tx.new(nil)
           payload = t.parse_data_from_io(buf)
           @tx << t
         }
 
-        if Bitcoin.network_project == :ppcoin
-          @block_signature = Protocol.unpack_var_string_from_io(buf)
-          @block_signature ||= ""
-        end
-
         @payload = to_payload
         buf
       end
 
-      #alias :parse_data  :parse_data_from_io # enable soon
-
       # recalculate the block hash
       def recalc_block_hash
         @hash = Bitcoin.block_hash(@prev_block.reverse_hth, @mrkl_root.reverse_hth, @time, @bits, @nonce, @ver)
+      end
+
+      def recalc_mrkl_root
+        @mrkl_root = Bitcoin.hash_mrkl_tree( @tx.map(&:hash) ).last.htb_reverse
       end
 
       # verify mrkl tree
@@ -141,9 +118,9 @@ module Bitcoin
       def to_payload
         head = [@ver, @prev_block, @mrkl_root, @time, @bits, @nonce].pack("Va32a32VVV")
         head << @aux_pow.to_payload  if @aux_pow
-        return head  unless @tx.any?
-        head << [Protocol.pack_var_int(@tx.size), @tx.map(&:to_payload).join].join
-        head << Protocol.pack_var_string(@block_signature)  if Bitcoin.ppcoin?
+        return head if @tx.size == 0
+        head << Protocol.pack_var_int(@tx.size)
+        @tx.each{|tx| head << tx.to_payload }
         head
       end
 
@@ -157,7 +134,6 @@ module Bitcoin
           'tx' => @tx.map{|i| i.to_hash },
           'mrkl_tree' => Bitcoin.hash_mrkl_tree( @tx.map{|i| i.hash } )
         }
-        h['signature'] = @block_signature.reverse_hth if Bitcoin.network_project == :ppcoin
         h['aux_pow'] = @aux_pow.to_hash  if @aux_pow
         h
       end
@@ -177,10 +153,15 @@ module Bitcoin
       # introduced in block version 2 by BIP_0034
       # blockchain height as seen by the block itself.
       # do not trust this value, instead verify with chain storage.
-      def bip34_block_height
+      def bip34_block_height(height=nil)
         return nil unless @ver >= 2
-        coinbase = @tx.first.inputs.first.script_sig
-        coinbase[1..coinbase[0].ord].ljust(4, "\x00").unpack("V").first
+        if height # generate height binary
+          buf = [height].pack("V").gsub(/\x00+$/,"")
+          [buf.bytesize, buf].pack("Ca*")
+        else
+          coinbase = @tx.first.inputs.first.script_sig
+          coinbase[1..coinbase[0].ord].ljust(4, "\x00").unpack("V").first
+        end
       rescue
         nil
       end
@@ -198,20 +179,19 @@ module Bitcoin
       end
 
       # parse ruby hash (see also #to_hash)
-      def self.from_hash(h)
+      def self.from_hash(h, do_raise=true)
         blk = new(nil)
         blk.instance_eval{
           @ver, @time, @bits, @nonce = h.values_at('ver', 'time', 'bits', 'nonce')
           @prev_block, @mrkl_root = h.values_at('prev_block', 'mrkl_root').map{|i| i.htb_reverse }
           unless h['hash'] == recalc_block_hash
-            raise "Block hash mismatch! Claimed: #{h['hash']}, Actual: #{@hash}"
+            raise "Block hash mismatch! Claimed: #{h['hash']}, Actual: #{@hash}" if do_raise
           end
           @aux_pow = AuxPow.from_hash(h['aux_pow'])  if h['aux_pow']
           h['tx'].each{|tx| @tx << Tx.from_hash(tx) }
           if h['tx'].any? && !Bitcoin.freicoin?
-            raise "Block merkle root mismatch!"  unless verify_mrkl_root
+            (raise "Block merkle root mismatch! Block: #{h['hash']}"  unless verify_mrkl_root) if do_raise
           end
-          @block_signature = h['signature'].htb_reverse if Bitcoin.ppcoin?
         }
         blk
       end

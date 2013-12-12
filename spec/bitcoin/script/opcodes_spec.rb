@@ -542,6 +542,12 @@ describe "Bitcoin::Script OPCODES" do
     script = "0 #{sig1} #{sig2} 2 #{k1.pub} #{k2.pub} 2 OP_CHECKMULTISIG"
     run_script(script, "foobar").should == true
 
+    script = "0 #{sig2} #{sig1} 2 #{k1.pub} #{k2.pub} 2 OP_CHECKMULTISIG"
+    run_script(script, "foobar").should == false
+
+    script = "0 #{sig1} #{sig2} 2 #{k2.pub} #{k1.pub} 2 OP_CHECKMULTISIG"
+    run_script(script, "foobar").should == false
+
     script = "0 #{sig1} #{sig2} 2 #{k1.pub} #{k2.pub} #{k3.pub} 3 OP_CHECKMULTISIG"
     run_script(script, "foobar").should == true
 
@@ -604,59 +610,6 @@ describe "Bitcoin::Script OPCODES" do
     # script = "0 #{sig1} #{sig3} #{sig2} 3 #{k1.pub} #{k2.pub} #{k3.pub} 3 OP_CHECKMULTISIG"
     # run_script(script, "foobar").should == false
   end
-
-
-=begin
-  it "should do OP_CHECKHASHVERIFY" do # https://en.bitcoin.it/wiki/BIP_0017
-    k1 = Bitcoin::Key.new; k1.generate
-    k2 = Bitcoin::Key.new; k2.generate
-    k3 = Bitcoin::Key.new; k2.generate
-    sig1 = (k1.sign("foobar") + "\x01").unpack("H*")[0]
-    sig2 = (k2.sign("foobar") + "\x01").unpack("H*")[0]
-    sig3 = (k2.sign("foobar") + "\x01").unpack("H*")[0]
-
-
-    # scriptSig: [signatures...] OP_CODESEPARATOR 1 [pubkey1] [pubkey2] 2 OP_CHECKMULTISIG
-    # scriptPubKey: [20-byte-hash of {1 [pubkey1] [pubkey2] 2 OP_CHECKMULTISIG} ] OP_CHECKHASHVERIFY OP_DROP
-    script = "1 #{k1.pub} #{k2.pub} 2 OP_CHECKMULTISIG"
-    checkhash = Bitcoin.hash160(Bitcoin::Script.binary_from_string(script).unpack("H*")[0])
-    script = "0 #{sig1} OP_CODESEPARATOR #{script} #{checkhash} OP_CHECKHASHVERIFY OP_DROP"
-    run_script(script, "foobar").should == true
-
-    script = "1 #{k1.pub} #{k2.pub} 2 OP_CHECKMULTISIG"
-    checkhash = Bitcoin.hash160(Bitcoin::Script.binary_from_string(script).unpack("H*")[0])
-    script = "0 #{sig1} OP_CODESEPARATOR #{script} #{checkhash} OP_NOP2 OP_DROP" # tests OP_NOP2 as OP_CHECKHASHVERIFY
-    run_script(script, "foobar").should == true
-
-    # invalid checkhashverify
-    script = "1 #{k1.pub} #{k2.pub} 2 OP_CHECKMULTISIG"
-    checkhash = Bitcoin.hash160(Bitcoin::Script.binary_from_string(script).unpack("H*")[0])
-    script = "1 #{k1.pub} #{k3.pub} 2 OP_CHECKMULTISIG"
-    script = "0 #{sig1} OP_CODESEPARATOR #{script} #{checkhash} OP_NOP2 OP_DROP" # tests OP_NOP2 as OP_CHECKHASHVERIFY
-    run_script(script, "foobar").should == false
-
-
-    # scriptSig: [signature] OP_CODESEPARATOR [pubkey] OP_CHECKSIG
-    # scriptPubKey: [20-byte-hash of {[pubkey] OP_CHECKSIG} ] OP_CHECKHASHVERIFY OP_DROP
-    script = "#{k1.pub} OP_CHECKSIG"
-    checkhash = Bitcoin.hash160(Bitcoin::Script.binary_from_string(script).unpack("H*")[0])
-    script = "#{sig1} OP_CODESEPARATOR #{script} #{checkhash} OP_CHECKHASHVERIFY OP_DROP"
-    run_script(script, "foobar").should == true
-
-    # invalid checkhashverify
-    script = "#{k2.pub} OP_CHECKSIG"
-    checkhash = Bitcoin.hash160(Bitcoin::Script.binary_from_string(script).unpack("H*")[0])
-    script = "#{k1.pub} OP_CHECKSIG"
-    script = "#{sig1} OP_CODESEPARATOR #{script} #{checkhash} OP_CHECKHASHVERIFY OP_DROP"
-    run_script(script, "foobar").should == false
-
-    # invalid signature in checksig
-    script = "#{k1.pub} OP_CHECKSIG"
-    checkhash = Bitcoin.hash160(Bitcoin::Script.binary_from_string(script).unpack("H*")[0])
-    script = "#{sig2} OP_CODESEPARATOR #{script} #{checkhash} OP_CHECKHASHVERIFY OP_DROP"
-    run_script(script, "foobar").should == false
-  end
-=end
 
   it "should do P2SH" do
     k1 = Bitcoin::Key.generate
@@ -738,6 +691,20 @@ describe "Bitcoin::Script OPCODES" do
       "2 82 OP_ADD 0 OP_EQUAL",
     ].each{|script|
       Bitcoin::Script.from_string(script).run.should == true
+    }
+  end
+
+  it "should do OP_VER" do
+    s = Bitcoin::Script.from_string("OP_VER"); s.run; s.invalid?.should == true
+    s = Bitcoin::Script.from_string("1 OP_IF OP_VER 1 OP_ELSE 0 OP_ENDIF"); s.run.should == false; s.invalid?.should == true
+    s = Bitcoin::Script.from_string("1 OP_IF 1 OP_ELSE OP_VER 0 OP_ENDIF"); s.run.should == true;  s.invalid?.should == false
+  end
+
+  it "should not allow DISABLED_OPCODES" do
+    Bitcoin::Script::DISABLED_OPCODES.each{|opcode|
+      s = Bitcoin::Script.from_string(Bitcoin::Script::OPCODES[opcode] + " 1"); s.run.should == false; s.invalid?.should == true
+      s = Bitcoin::Script.from_string("1 OP_IF #{Bitcoin::Script::OPCODES[opcode]} 1 OP_ELSE 1 OP_ENDIF"); s.run.should == false; s.invalid?.should == true
+      s = Bitcoin::Script.from_string("1 OP_IF 1 OP_ELSE #{Bitcoin::Script::OPCODES[opcode]} 1 OP_ENDIF"); s.run.should == false; s.invalid?.should == true
     }
   end
 

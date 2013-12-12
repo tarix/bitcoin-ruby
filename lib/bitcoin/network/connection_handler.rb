@@ -36,6 +36,7 @@ module Bitcoin::Network
       @state = :new
       @version = nil
       @started = nil
+      @port, @host = *Socket.unpack_sockaddr_in(get_peername)  if get_peername
       @ping_nonce = nil
       @latency_ms = nil
       @lock = Monitor.new
@@ -133,6 +134,7 @@ module Bitcoin::Network
     def on_get_transaction(hash)
       log.debug { ">> get transaction: #{hash.hth}" }
       tx = @node.store.get_tx(hash.hth)
+      tx ||= @node.relay_tx[hash.hth]
       return  unless tx
       pkt = Bitcoin::Protocol.pkt("tx", tx.to_payload)
       log.debug { "<< tx: #{tx.hash}" }
@@ -338,6 +340,22 @@ module Bitcoin::Network
         @latency_ms = (Time.now - @ping_time) * 1000.0
       end
       log.debug { ">> pong (#{nonce}), latency: #{@latency_ms.to_i}ms" }
+    end
+
+    # begin handshake; send +version+ message
+    def on_handshake_begin
+      @state = :handshake
+      from = "#{@node.external_ip}:#{@node.config[:listen][1]}"
+      version = Bitcoin::Protocol::Version.new({
+        :version    => 70001,
+        :last_block => @node.store.get_depth,
+        :from       => from,
+        :to         => @host,
+        :user_agent => "/bitcoin-ruby:#{Bitcoin::VERSION}/",
+        #:user_agent => "/Satoshi:0.8.1/",
+      })
+      send_data(version.to_pkt)
+      log.debug { "<< version (#{Bitcoin.network[:protocol_version]})" }
     end
 
     # get Addr object for this connection

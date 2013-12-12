@@ -84,6 +84,7 @@ Bitcoin::NETWORKS[:spec] = {
   :privkey_version => "ef",
   :default_port => 48333,
   :protocol_version => 70001,
+  :max_money => 21_000_000 * 100_000_000,
   :dns_seeds => [],
   :genesis_hash => "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943",
   :proof_of_work_limit => 553713663,
@@ -101,3 +102,24 @@ rescue LoadError
 end
 Bacon.summary_on_exit
 require 'minitest/mock'
+
+require 'sequel'
+def setup_db backend, db = nil, conf = {}
+  uri = case db
+        when :sqlite
+          "sqlite:/"
+        when :postgres
+          ENV["TEST_DB_POSTGRES"].dup rescue nil
+        when :mysql
+          ENV["TEST_DB_MYSQL"].dup rescue nil
+        end
+  if [:postgres, :mysql].include?(db)
+    unless uri
+      puts "Skipping #{db} tests"  
+      return nil
+    end
+    db = Sequel.connect(uri)
+    db.drop_table(*db.tables, cascade: true)
+  end
+  Bitcoin::Storage.send(backend, conf.merge(db: uri, log_level: :warn))
+end

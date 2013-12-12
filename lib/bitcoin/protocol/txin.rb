@@ -25,10 +25,14 @@ module Bitcoin
       attr_accessor :sequence
 
       DEFAULT_SEQUENCE = "\xff\xff\xff\xff"
+      NULL_HASH = "\x00"*32
+      COINBASE_INDEX = 0xffffffff
 
       def initialize *args
         @prev_out, @prev_out_index, @script_sig_length,
         @script_sig, @sequence = *args
+        @script_sig_length ||= 0
+        @script_sig ||= ''
         @sequence ||= DEFAULT_SEQUENCE
       end
 
@@ -42,13 +46,9 @@ module Bitcoin
 
       # parse raw binary data for transaction input
       def parse_data(data)
-        idx = 0
-        @prev_out, @prev_out_index = data[idx...idx+=36].unpack("a32V")
-        @script_sig_length, tmp = Protocol.unpack_var_int(data[idx..-1])
-        idx += data[idx..-1].bytesize - tmp.bytesize
-        @script_sig = data[idx...idx+=@script_sig_length]
-        @sequence = data[idx...idx+=4]
-        idx
+        buf = data.is_a?(String) ? StringIO.new(data) : data
+        parse_data_from_io(buf)
+        buf.pos
       end
 
       def self.from_io(buf)
@@ -62,13 +62,8 @@ module Bitcoin
         @sequence = buf.read(4)
       end
 
-      alias :parse_payload :parse_data
-
       def to_payload(script=@script_sig, sequence=@sequence)
-        buf =  [ @prev_out, @prev_out_index ].pack("a32V")
-        buf << Protocol.pack_var_int(script.bytesize)
-        buf << script if script.bytesize > 0
-        buf << (sequence || DEFAULT_SEQUENCE)
+        [@prev_out, @prev_out_index].pack("a32V") << Protocol.pack_var_int(script.bytesize) << script << (sequence || DEFAULT_SEQUENCE)
       end
 
       def to_hash(options = {})
@@ -104,7 +99,7 @@ module Bitcoin
 
       # check if input is coinbase
       def coinbase?
-        (@prev_out_index == 4294967295) && (@prev_out == "\x00"*32)
+        (@prev_out_index == COINBASE_INDEX) && (@prev_out == NULL_HASH)
       end
 
       # set script_sig and script_sig_length

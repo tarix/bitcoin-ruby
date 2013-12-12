@@ -41,8 +41,6 @@ module Bitcoin
       # create tx from raw binary +data+
       def initialize(data=nil)
         @ver, @lock_time, @in, @out = 1, 0, [], []
-        @time = Time.now.to_i if Bitcoin.network_project == :ppcoin
-        #parse_data(data) if data
         parse_data_from_io(data) if data
       end
 
@@ -59,56 +57,19 @@ module Bitcoin
       def add_out(output); (@out ||= []) << output; end
 
       # parse raw binary data
-      def parse_data(data)
-        @ver = data.unpack("V")[0]
-        idx = 4
-        (@time = data.unpack("x4V")[0]; idx += 4) if Bitcoin.network_project == :ppcoin
-
-        in_size, tmp = Protocol.unpack_var_int(data[idx..-1])
-        idx += data[idx..-1].bytesize-tmp.bytesize
-        # raise "unkown transaction version: #{@ver}" unless @ver == 1
-
-        @in = (0...in_size).map{
-          txin = TxIn.new
-          idx += txin.parse_data(data[idx..-1])
-          txin
-        }
-
-        out_size, tmp = Protocol.unpack_var_int(data[idx..-1])
-        idx += data[idx..-1].bytesize-tmp.bytesize
-
-        @out = (0...out_size).map{
-          txout = TxOut.new
-          idx += txout.parse_data(data[idx..-1])
-          txout
-        }
-
-        @lock_time = data[idx...idx+=4].unpack("V")[0]
-
-        @payload = data[0...idx]
-        @hash = hash_from_payload(@payload)
-
-        if data[idx] == nil
-          true          # reached the end.
-        else
-          data[idx..-1] # rest of buffer.
-        end
-      end
-
-      # parse raw binary data
       def parse_data_from_io(data)
         buf = data.is_a?(String) ? StringIO.new(data) : data
         payload_start = buf.pos
 
         @ver = buf.read(4).unpack("V")[0]
-        @time = buf.read(4).unpack("V")[0] if Bitcoin.network_project == :ppcoin
 
         in_size = Protocol.unpack_var_int_from_io(buf)
-        # raise "unkown transaction version: #{@ver}" unless @ver == 1
-        @in = (0...in_size).map{ TxIn.from_io(buf) }
+        @in = []
+        in_size.times{ @in << TxIn.from_io(buf) }
 
         out_size = Protocol.unpack_var_int_from_io(buf)
-        @out = (0...out_size).map{ TxOut.from_io(buf) }
+        @out = []
+        out_size.times{ @out << TxOut.from_io(buf) }
 
         @lock_time = buf.read(4).unpack("V")[0]
 
@@ -124,19 +85,16 @@ module Bitcoin
         end
       end
 
-      #alias :parse_data  :parse_data_from_io # enable soon
+      alias :parse_data  :parse_data_from_io
 
       # output transaction in raw binary format
       def to_payload
-        pin  =  @in.map(&:to_payload).join
-        pout = @out.map(&:to_payload).join
+        pin = ""
+        @in.each{|input| pin << input.to_payload }
+        pout = ""
+        @out.each{|output| pout << output.to_payload }
 
-        in_size, out_size = Protocol.pack_var_int(@in.size), Protocol.pack_var_int(@out.size)
-        if Bitcoin.network_project == :ppcoin
-          [[@ver, @time].pack("VV"), in_size, pin, out_size, pout, [@lock_time].pack("V")].join
-        else
-          [[@ver].pack("V"), in_size, pin, out_size, pout, [@lock_time].pack("V")].join
-        end
+        [@ver].pack("V") << Protocol.pack_var_int(@in.size) << pin << Protocol.pack_var_int(@out.size) << pout << [@lock_time].pack("V")
       end
 
 
@@ -158,8 +116,8 @@ module Bitcoin
         pin  = @in.map.with_index{|input,idx|
           if idx == input_idx
             script_pubkey ||= outpoint_tx.out[ input.prev_out_index ].pk_script
-            script_pubkey = Bitcoin::Script.binary_from_string(script)[0]             if script # force this string a script
-            script_pubkey = Bitcoin::Script.drop_signatures(script_pubkey, drop_sigs) if drop_sigs # array of signature to drop
+            script_pubkey = script                                                    if script    # force binary aa script
+            script_pubkey = Bitcoin::Script.drop_signatures(script_pubkey, drop_sigs) if drop_sigs # array of signature to drop (slow)
             #p Bitcoin::Script.new(script_pubkey).to_string
             input.to_payload(script_pubkey)
           else
@@ -188,11 +146,7 @@ module Bitcoin
           in_size, pin = Protocol.pack_var_int(1), [ pin[input_idx] ]
         end
 
-        if Bitcoin.network_project == :ppcoin
-          buf = [ [@ver, @time].pack("VV"), in_size, pin, out_size, pout, [@lock_time, hash_type].pack("VV") ].join
-        else
-          buf = [ [@ver].pack("V"), in_size, pin, out_size, pout, [@lock_time, hash_type].pack("VV") ].join
-        end
+        buf = [ [@ver].pack("V"), in_size, pin, out_size, pout, [@lock_time, hash_type].pack("VV") ].join
         Digest::SHA256.digest( Digest::SHA256.digest( buf ) )
       end
 
@@ -222,7 +176,6 @@ module Bitcoin
           'in'  =>  @in.map{|i| i.to_hash(options) },
           'out' => @out.map{|o| o.to_hash(options) }
         }
-        h['time'] = @time if Bitcoin.network_project == :ppcoin
         h
       end
 
@@ -243,7 +196,6 @@ module Bitcoin
         tx.ver, tx.lock_time = *h.values_at('ver', 'lock_time')
         h['in'] .each{|input|   tx.add_in  TxIn.from_hash(input)   }
         h['out'].each{|output|  tx.add_out TxOut.from_hash(output) }
-        tx.instance_eval{ @time = h['time'] } if Bitcoin.network_project == :ppcoin
         tx.instance_eval{ @hash = hash_from_payload(@payload = to_payload) }
         tx
       end
@@ -267,34 +219,39 @@ module Bitcoin
         @validator ||= Bitcoin::Validation::Tx.new(self, store, block)
       end
 
-      def minimum_relay_fee; calculate_minimum_fee(1_000, true, :relay); end
-      def minimum_block_fee; calculate_minimum_fee(1_000, true, :block); end
+      DEFAULT_BLOCK_PRIORITY_SIZE = 27000
 
-      def calculate_minimum_fee(block_size=1, allow_free=true, mode=:block)
-        base_fee       = (mode == :relay) ? Bitcoin::MIN_RELAY_TX_FEE : Bitcoin::MIN_TX_FEE
-        tx_size        = to_payload.bytesize
-        new_block_size = block_size + tx_size
-        min_fee       = (1 + tx_size / 1_000) * base_fee
+      def minimum_relay_fee; calculate_minimum_fee(allow_free=true, :relay); end
+      def minimum_block_fee; calculate_minimum_fee(allow_free=true, :block); end
+
+      def calculate_minimum_fee(allow_free=true, mode=:block)
+        # Base fee is either nMinTxFee or nMinRelayTxFee
+        base_fee  = (mode == :relay) ? Bitcoin.network[:min_relay_tx_fee] : Bitcoin.network[:min_tx_fee]
+        tx_size   = to_payload.bytesize
+        min_fee   = (1 + tx_size / 1_000) * base_fee
 
         if allow_free
-          if block_size == 1
-            min_fee = 0 if tx_size < 10_000
-          else
-            min_fee = 0 if new_block_size < 27_000
-          end
+          # There is a free transaction area in blocks created by most miners,
+          # * If we are relaying we allow transactions up to DEFAULT_BLOCK_PRIORITY_SIZE - 1000
+          #   to be considered to fall into this category. We don't want to encourage sending
+          #   multiple transactions instead of one big transaction to avoid fees.
+          # * If we are creating a transaction we allow transactions up to 1,000 bytes
+          #   to be considered safe and assume they can likely make it into this section.
+          min_fee = 0 if tx_size < (mode == :block ? 1_000 : DEFAULT_BLOCK_PRIORITY_SIZE - 1_000)
         end
 
-        if min_fee < base_fee
+        # This code can be removed after enough miners have upgraded to version 0.9.
+        # Until then, be safe when sending and require a fee if any output is less than CENT
+        if min_fee < base_fee && mode == :block
           outputs.each{|output| (min_fee = base_fee; break) if output.value < Bitcoin::CENT }
         end
 
-        if block_size != 1 && new_block_size >= (Bitcoin::MAX_BLOCK_SIZE_GEN/2)
-          #return Bitcoin::MAX_MONEY if new_block_size >= Bitcoin::MAX_BLOCK_SIZE_GEN
-          min_fee *= Bitcoin::MAX_BLOCK_SIZE_GEN / (Bitcoin::MAX_BLOCK_SIZE_GEN - new_block_size)
-        end
-
-        min_fee = Bitcoin::MAX_MONEY unless min_fee.between?(0, Bitcoin::MAX_MONEY)
+        min_fee = Bitcoin::network[:max_money] unless min_fee.between?(0, Bitcoin::network[:max_money])
         min_fee
+      end
+
+      def is_coinbase?
+        inputs.size == 1 and inputs.first.coinbase?
       end
 
     end
