@@ -154,7 +154,7 @@ class Bitcoin::Script
     program = bytes.unpack("C*")
     chunks = []
     until program.empty?
-      opcode = program.shift(1)[0]
+      opcode = program.shift
 
       if (opcode > 0) && (opcode < OP_PUSHDATA1)
         len, tmp = opcode, program[0]
@@ -408,7 +408,6 @@ class Bitcoin::Script
     script, script_hash = cast_to_string(script), cast_to_string(script_hash)
 
     return false unless Bitcoin.hash160(script.unpack("H*")[0]) == script_hash.unpack("H*")[0]
-    rest.delete_at(0) if rest[0] && cast_to_bignum(rest[0]) == 0
 
     script = self.class.new(to_binary(rest) + script).inner_p2sh!(script)
     result = script.run(&check_callback)
@@ -959,6 +958,7 @@ class Bitcoin::Script
   end
 
   def cast_to_bignum(buf)
+    return (invalid; 0) unless buf
     case buf
     when Numeric; buf
     when String; OpenSSL::BN.new([buf.bytesize].pack("N") + buf.reverse, 0).to_i
@@ -967,6 +967,7 @@ class Bitcoin::Script
   end
 
   def cast_to_string(buf)
+    return (invalid; "") unless buf
     case buf
     when Numeric; OpenSSL::BN.new(buf.to_s).to_s(0)[4..-1]
     when String; buf;
@@ -998,9 +999,9 @@ class Bitcoin::Script
   # This is used by Protocol::Tx#verify_input_signature
   def op_checksig(check_callback)
     return invalid if @stack.size < 2
-    pubkey = @stack.pop
+    pubkey = cast_to_string(@stack.pop)
     #return (@stack << 0) unless Bitcoin::Script.is_canonical_pubkey?(pubkey) # only for isStandard
-    drop_sigs      = [ @stack[-1] ]
+    drop_sigs      = [ cast_to_string(@stack[-1]) ]
 
     signature = cast_to_string(@stack.pop)
     #return (@stack << 0) unless Bitcoin::Script.is_canonical_signature?(signature) # only for isStandard
@@ -1077,7 +1078,7 @@ class Bitcoin::Script
       success = false if n_sigs > n_pubkeys
     end
 
-    @stack << (success ? 1 : (invalid; 0))
+    @stack << (success ? 1 : 0)
   end
 
   # op_eval: https://en.bitcoin.it/wiki/BIP_0012
