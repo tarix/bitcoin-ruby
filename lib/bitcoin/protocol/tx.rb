@@ -35,7 +35,7 @@ module Bitcoin
 
       # return the tx hash in binary format
       def binary_hash
-        [@hash].pack("H*").reverse
+        @binary_hash ||= [@hash].pack("H*").reverse
       end
 
       # create tx from raw binary +data+
@@ -102,24 +102,28 @@ module Bitcoin
 
       # generate a signature hash for input +input_idx+.
       # either pass the +outpoint_tx+ or the +script_pubkey+ directly.
-      def signature_hash_for_input(input_idx, outpoint_tx, script_pubkey=nil, hash_type=nil, drop_sigs=nil, script=nil)
+      def signature_hash_for_input(input_idx, subscript, hash_type=nil)
         # https://github.com/bitcoin/bitcoin/blob/e071a3f6c06f41068ad17134189a4ac3073ef76b/script.cpp#L834
         # http://code.google.com/p/bitcoinj/source/browse/trunk/src/com/google/bitcoin/core/Script.java#318
         # https://en.bitcoin.it/wiki/OP_CHECKSIG#How_it_works
         # https://github.com/bitcoin/bitcoin/blob/c2e8c8acd8ae0c94c70b59f55169841ad195bb99/src/script.cpp#L1058
         # https://en.bitcoin.it/wiki/OP_CHECKSIG
 
+        # Note: BitcoinQT checks if input_idx >= @in.size and returns 1 with an error message.
+        # But this check is never actually useful because BitcoinQT would crash 
+        # right before VerifyScript if input index is out of bounds (inside CScriptCheck::operator()()).
+        # That's why we don't need to do such a check here.
+        #
+        # However, if you look at the case SIGHASH_TYPE[:single] below, we must 
+        # return 1 because it's possible to have more inputs than outputs and BitcoinQT returns 1 as well.
         return "\x01".ljust(32, "\x00") if input_idx >= @in.size # ERROR: SignatureHash() : input_idx=%d out of range
 
         hash_type ||= SIGHASH_TYPE[:all]
 
         pin  = @in.map.with_index{|input,idx|
           if idx == input_idx
-            script_pubkey ||= outpoint_tx.out[ input.prev_out_index ].pk_script
-            script_pubkey = script                                                    if script    # force binary aa script
-            script_pubkey = Bitcoin::Script.drop_signatures(script_pubkey, drop_sigs) if drop_sigs # array of signature to drop (slow)
-            #p Bitcoin::Script.new(script_pubkey).to_string
-            input.to_payload(script_pubkey)
+            subscript = subscript.out[ input.prev_out_index ].script if subscript.respond_to?(:out) # legacy api (outpoint_tx)
+            input.to_payload(subscript)
           else
             case (hash_type & 0x1f)
             when SIGHASH_TYPE[:none];   input.to_payload("", "\x00\x00\x00\x00")
@@ -152,16 +156,21 @@ module Bitcoin
 
       # verify input signature +in_idx+ against the corresponding
       # output in +outpoint_tx+
-      def verify_input_signature(in_idx, outpoint_tx, block_timestamp=Time.now.to_i)
+      # outpoint
+      def verify_input_signature(in_idx, outpoint_tx_or_script, block_timestamp=Time.now.to_i)
         outpoint_idx  = @in[in_idx].prev_out_index
         script_sig    = @in[in_idx].script_sig
-        script_pubkey = outpoint_tx.out[outpoint_idx].pk_script
-        script        = script_sig + script_pubkey
+        
+        # If given an entire previous transaction, take the script from it
+        script_pubkey = if outpoint_tx_or_script.respond_to?(:out) 
+          outpoint_tx_or_script.out[outpoint_idx].pk_script
+        else
+          # Otherwise, it's already a script.
+          outpoint_tx_or_script
+        end
 
-        Bitcoin::Script.new(script).run(block_timestamp) do |pubkey,sig,hash_type,drop_sigs,script|
-          # this IS the checksig callback, must return true/false
-          hash = signature_hash_for_input(in_idx, outpoint_tx, nil, hash_type, drop_sigs, script)
-          #hash = signature_hash_for_input(in_idx, nil, script_pubkey, hash_type, drop_sigs, script)
+        Bitcoin::Script.new(script_sig, script_pubkey).run(block_timestamp) do |pubkey,sig,hash_type,subscript|
+          hash = signature_hash_for_input(in_idx, subscript, hash_type)
           Bitcoin.verify_signature( hash, sig, pubkey.unpack("H*")[0] )
         end
       end
@@ -215,12 +224,42 @@ module Bitcoin
       # read json block from a file
       def self.from_json_file(path); from_json( Bitcoin::Protocol.read_binary_file(path) ); end
 
-      def validator(store, block = nil)
-        @validator ||= Bitcoin::Validation::Tx.new(self, store, block)
+      def validator(store, block = nil, opts = {})
+        @validator ||= Bitcoin::Validation::Tx.new(self, store, block, opts)
       end
 
       def size
         payload.bytesize
+      end
+      
+      # Checks if transaction is final taking into account height and time 
+      # of a block in which it is located (or about to be included if it's unconfirmed tx).
+      def is_final?(block_height, block_time)
+        # No time lock - tx is final.
+        return true if lock_time == 0
+
+        # Time based nLockTime implemented in 0.1.6
+        # If lock_time is below the magic threshold treat it as a block height.
+        # If lock_time is above the threshold, it's a unix timestamp.
+        return true if lock_time < (lock_time < Bitcoin::LOCKTIME_THRESHOLD ? block_height : block_time)
+
+        inputs.each{|input| return false if !input.is_final? }
+
+        return true
+      end
+      
+      def legacy_sigops_count
+        # Note: input scripts normally never have any opcodes since every input script 
+        # can be statically reduced to a pushdata-only script.
+        # However, anyone is allowed to create a non-standard transaction with any opcodes in the inputs.
+        count = 0
+        self.in.each do |txin|
+          count += Bitcoin::Script.new(txin.script_sig).sigops_count_accurate(false)
+        end
+        self.out.each do |txout|
+          count += Bitcoin::Script.new(txout.pk_script).sigops_count_accurate(false)
+        end
+        count
       end
 
       DEFAULT_BLOCK_PRIORITY_SIZE = 27000
@@ -259,8 +298,9 @@ module Bitcoin
       end
 
       def normalized_hash
-        signature_hash_for_input(-1, nil, nil, SIGHASH_TYPE[:all]).unpack("H*")[0]
+        signature_hash_for_input(-1, nil, SIGHASH_TYPE[:all]).unpack("H*")[0]
       end
+      alias :nhash :normalized_hash
 
     end
   end

@@ -42,6 +42,13 @@ module Bitcoin
           @prev_out_index == other.prev_out_index &&
           @script_sig == other.script_sig &&
           @sequence == other.sequence
+      rescue
+        false
+      end
+      
+      # returns true if the sequence number is final (DEFAULT_SEQUENCE)
+      def is_final?
+        self.sequence == DEFAULT_SEQUENCE
       end
 
       # parse raw binary data for transaction input

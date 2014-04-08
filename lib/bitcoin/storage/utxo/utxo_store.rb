@@ -106,7 +106,7 @@ module Bitcoin::Storage::Backends
             tx_idx: txin.prev_out_index  }  if @new_outs.size == size
         end
         tx.out.each.with_index do |txout, txout_tx_idx|
-          _, a, n = *parse_script(txout, txout_tx_idx)
+          _, a, n = *parse_script(txout, txout_tx_idx, tx.hash, txout_tx_idx)
           @new_outs << [{
               :tx_hash => tx.hash.blob,
               :tx_idx => txout_tx_idx,
@@ -289,6 +289,12 @@ module Bitcoin::Storage::Backends
     # get corresponding Models::TxOut for +txin+
     def get_txout_for_txin(txin)
       wrap_txout(@db[:utxo][tx_hash: txin.prev_out.reverse.hth.blob, tx_idx: txin.prev_out_index])
+    end
+
+    # get the next input that references given output
+    # we only store unspent outputs, so it's always nil
+    def get_txin_for_txout(tx_hash, tx_idx)
+      nil
     end
 
     # get all Models::TxOut matching given +script+

@@ -1,25 +1,7 @@
 # encoding: ascii-8bit
 
 module Bitcoin::Validation
-
-  # maximum size of a block (in bytes)
-  MAX_BLOCK_SIZE = 1_000_000
-
-  # maximum number of signature operations in a block
-  MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE / 50
-
-  # maximum integer value
-  INT_MAX = 0xffffffff
-
-  # number of confirmations required before coinbase tx can be spent
-  COINBASE_MATURITY = 100
-
-  # interval (in blocks) for difficulty retarget
-  RETARGET = 2016
-
-  # interval (in blocks) for mining reward reduction
-  REWARD_DROP = 210_000
-
+    
   class ValidationError < StandardError
   end
 
@@ -102,7 +84,7 @@ module Bitcoin::Validation
 
     # check that coinbase value is valid; no more than reward + fees
     def coinbase_value
-      reward = ((50.0 / (2 ** (store.get_depth / REWARD_DROP.to_f).floor)) * 1e8).to_i
+      reward = ((50.0 / (2 ** (store.get_depth / Bitcoin::REWARD_DROP.to_f).floor)) * 1e8).to_i
       fees = 0
       block.tx[1..-1].map.with_index do |t, idx|
         val = tx_validators[idx]
@@ -148,6 +130,9 @@ module Bitcoin::Validation
 
     # check transactions
     def transactions_syntax
+      # check if there are no double spends within this block
+      return false if block.tx.map(&:in).flatten.map {|i| [i.prev_out, i.prev_out_index] }.uniq! != nil
+
       tx_validators.all?{|v|
         begin
           v.validate(rules: [:syntax], raise_errors: true)
@@ -170,20 +155,31 @@ module Bitcoin::Validation
     end
 
     def tx_validators
-      @tx_validators ||= block.tx[1..-1].map {|tx| tx.validator(store, block) }
+      @tx_validators ||= block.tx[1..-1].map {|tx| tx.validator(store, block, tx_cache: prev_txs_hash)}
+    end
+
+    # Fetch all prev_txs that will be needed for validation
+    # Used for optimization in tx validators
+    def prev_txs_hash
+      @prev_tx_hash ||= (
+        inputs = block.tx.map {|tx| tx.in }.flatten
+        txs = store.get_txs(inputs.map{|i| i.prev_out.reverse_hth })
+        Hash[*txs.map {|tx| [tx.hash, tx] }.flatten]
+      )
     end
 
     def next_bits_required
-      index = (prev_block.depth + 1) / RETARGET
+      retarget = (Bitcoin.network[:retarget_interval] || Bitcoin::RETARGET_INTERVAL)
+      index = (prev_block.depth + 1) / retarget  
       max_target = Bitcoin.decode_compact_bits(Bitcoin.network[:proof_of_work_limit]).to_i(16)
       return Bitcoin.network[:proof_of_work_limit]  if index == 0
-      return prev_block.bits  if (prev_block.depth + 1) % RETARGET != 0
+      return prev_block.bits  if (prev_block.depth + 1) % retarget != 0
       last = store.db[:blk][hash: prev_block.hash.htb.blob]
       first = store.db[:blk][hash: last[:prev_hash].blob]
-      (RETARGET-2).times { first = store.db[:blk][hash: first[:prev_hash].blob] }
+      (retarget - 2).times { first = store.db[:blk][hash: first[:prev_hash].blob] }
 
       nActualTimespan = last[:time] - first[:time]
-      nTargetTimespan = RETARGET * 600
+      nTargetTimespan = retarget * 600
 
       nActualTimespan = [nActualTimespan, nTargetTimespan/4].max
       nActualTimespan = [nActualTimespan, nTargetTimespan*4].min
@@ -206,7 +202,7 @@ module Bitcoin::Validation
 
     RULES = {
       syntax: [:hash, :lists, :max_size, :output_values, :inputs, :lock_time, :standard],
-      context: [:prev_out, :signatures, :spent, :input_values, :output_sum]
+      context: [:prev_out, :signatures, :not_spent, :input_values, :output_sum]
     }
 
     # validate tx rules. +opts+ are:
@@ -238,8 +234,10 @@ module Bitcoin::Validation
 
     # setup new validator for given +tx+, validating context with +store+.
     # also needs the +block+ to find prev_outs for chains of tx inside one block.
-    def initialize tx, store, block = nil
+    # opts+ may include :tx_cache which should be hash with transactiotns including prev_txs
+    def initialize(tx, store, block = nil, opts = {})
       @tx, @store, @block, @errors = tx, store, block, []
+      @tx_cache = opts[:tx_cache]
     end
 
     # check that tx hash matches data
@@ -255,7 +253,7 @@ module Bitcoin::Validation
 
     # check that tx size doesn't exceed MAX_BLOCK_SIZE.
     def max_size
-      tx.to_payload.bytesize <= MAX_BLOCK_SIZE || [tx.to_payload.bytesize, MAX_BLOCK_SIZE]
+      tx.to_payload.bytesize <= Bitcoin::MAX_BLOCK_SIZE || [tx.to_payload.bytesize, Bitcoin::MAX_BLOCK_SIZE]
     end
 
     # check that total output value doesn't exceed MAX_MONEY.
@@ -272,7 +270,7 @@ module Bitcoin::Validation
 
     # check that lock_time doesn't exceed INT_MAX
     def lock_time
-      tx.lock_time <= INT_MAX || [tx.lock_time, INT_MAX]
+      tx.lock_time <= Bitcoin::UINT32_MAX || [tx.lock_time, Bitcoin::UINT32_MAX]
     end
 
     # check that min_size is at least 86 bytes
@@ -308,16 +306,21 @@ module Bitcoin::Validation
       sigs.all? || sigs.map.with_index {|s, i| s ? nil : i }.compact
     end
 
-    # check that none of the prev_outs are already spent in the main chain
-    def spent
-      spent = tx.in.map.with_index {|txin, idx|
-        next false  if @block && @block.tx.include?(prev_txs[idx])
-        next false  unless next_in = prev_txs[idx].out[txin.prev_out_index].get_next_in
-        next false  unless next_tx = next_in.get_tx
-        next false  unless next_block = next_tx.get_block
-        next_block.chain == Bitcoin::Storage::Backends::StoreBase::MAIN
-      }
-      spent.none? || spent.map.with_index {|s, i| s ? i : nil }
+    # check that none of the prev_outs are already spent in the main chain or in the current block
+    def not_spent
+      # find all spent txouts
+      # OPTIMIZE: these could be fetched in one query for all transactions and cached
+      next_ins = store.get_txins_for_txouts(tx.in.map.with_index {|txin, idx| [prev_txs[idx].hash, txin.prev_out_index] })
+
+      # no txouts found spending these txins, we can safely return true
+      return true if next_ins.empty?
+
+      # there were some txouts spending these txins, verify that they are not on the main chain
+      next_ins.select! {|i| i.get_tx.blk_id } # blk_id is only set for tx in the main chain
+      return true if next_ins.empty?
+
+      # now we know some txouts are already spent, return tx_idxs for debugging purposes
+      return next_ins.map {|i| i.get_prev_out.tx_idx }
     end
 
     # check that the total input value doesn't exceed MAX_MONEY
@@ -341,18 +344,9 @@ module Bitcoin::Validation
     # only returns tx that are in a block in the main chain or the current block.
     def prev_txs
       @prev_txs ||= tx.in.map {|i|
-        prev_tx = store.get_tx(i.prev_out.reverse_hth)
-        next prev_tx  if store.class.name =~ /UtxoStore/ && prev_tx
-        next nil  if !prev_tx && !@block
-
-        if store.class.name =~ /SequelStore/
-          block = store.db[:blk][id: prev_tx.blk_id]  if prev_tx
-          next prev_tx  if block && block[:chain] == 0
-        else
-          next prev_tx  if prev_tx && prev_tx.get_block && prev_tx.get_block.chain == 0
-        end
-        next  nil if !@block
-        @block.tx.find {|t| t.binary_hash == i.prev_out }
+        prev_tx = @tx_cache ? @tx_cache[i.prev_out.reverse_hth] : store.get_tx(i.prev_out.reverse_hth)
+        next prev_tx if prev_tx && prev_tx.blk_id # blk_id is set only if it's in the main chain
+        @block.tx.find {|t| t.binary_hash == i.prev_out } if @block
       }.compact
     end
 

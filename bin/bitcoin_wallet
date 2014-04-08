@@ -69,7 +69,7 @@ optparse.parse!
 
 cmd = ARGV.shift; cmdopts = ARGV
 unless cmd
-  exit puts optparse
+  puts optparse; exit
 end
 
 Bitcoin.network = options[:network]
@@ -120,6 +120,8 @@ def send_transaction(storage, options, tx, ask = true)
         puts "#{script.get_address} (address)"
       elsif script.is_multisig?
         puts "#{script.get_addresses.join(' ')} (multisig)"
+      elsif script.is_op_return?
+        puts "#{script.get_op_return_data} (op_return)"
       elsif script.is_namecoin?
         puts "#{script.get_address} (#{script.type})"
         print " " * 16
@@ -141,7 +143,7 @@ def send_transaction(storage, options, tx, ask = true)
     end
   end
   EM.run do
-    Bitcoin::Network::CommandClient.connect(*options[:command].split(":")) do
+    Bitcoin::Network::CommandClient.connect(*options[:command]) do
       on_connected do
         request(:relay_tx, tx.to_payload.hth)
       end
@@ -311,8 +313,9 @@ when "name_update"
   puts tx.hash
 
 when "send"
-  to = cmdopts[0].split(',').map do |pair|
-    type, *addrs, value = pair.split(":")
+  to = cmdopts[0].split(',').map do |opts|
+    o = opts.split(":")
+    type, *addrs, value = *(o.size == 2 ? [:address, *o] : o)
     value = val_str(value)
     [type.to_sym, *addrs, value]
   end
@@ -382,7 +385,7 @@ when "relay"
   end
 
   EM.run do
-    EM.connect(*options[:command].split(":")) do |conn|
+    EM.connect(*options[:command]) do |conn|
       conn.send_data(["relay_tx", tx.to_payload.unpack("H*")[0]].to_json)
       def conn.receive_data(data)
         (@buf ||= BufferedTokenizer.new("\x00")).extract(data).each do |packet|
@@ -395,5 +398,5 @@ when "relay"
   end
 
 else
-  puts "Unknown command."
+  puts "Unknown command. See --help for available commands."
 end

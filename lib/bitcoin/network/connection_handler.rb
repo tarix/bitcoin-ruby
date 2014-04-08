@@ -58,6 +58,7 @@ module Bitcoin::Network
 
     # only called for outgoing connection
     def connection_completed
+      @connection_completed = true
       begin_handshake
     rescue Exception
       log.fatal { "Error in #connection_completed" }
@@ -75,7 +76,7 @@ module Bitcoin::Network
 
     # connection closed; notify listeners and cleanup connection from node
     def unbind
-      log.info { "Disconnected" }
+      log.info { (outgoing? && !@connection_completed) ? "Connection failed" : "Disconnected" }
       @node.push_notification(:connection, [:disconnected, [@host, @port]])
       @state = :disconnected
       @node.connections.delete(self)
@@ -90,8 +91,7 @@ module Bitcoin::Network
       log.info { "Established #{@direction} connection" }
       @node.connections << self
       @state = :handshake
-      # incoming connections wait to receive a version
-      send_version if outgoing?
+      send_version
     rescue Exception
       log.fatal { "Error in #begin_handshake" }
       p $!; puts *$@
@@ -223,8 +223,7 @@ module Bitcoin::Network
 
       return  unless depth && depth <= @node.store.get_depth
       range = (depth+1..depth+500)
-      blocks = @node.store.db[:blk].where(chain: 0, depth: range).select(:hash).all +
-        [@node.store.db[:blk].select(:hash)[chain: 0, depth: depth+502]]
+      blocks = @node.store.db[:blk].where(chain: 0, depth: range).order(:depth).select(:hash).all
       send_inv(:block, *blocks.map {|b| b[:hash].hth })
     end
 

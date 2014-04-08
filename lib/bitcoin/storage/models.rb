@@ -134,7 +134,7 @@ module Bitcoin::Storage::Models
     end
 
     def hash160
-      script.get_hash160
+      parsed_script.get_hash160
     end
 
     # get the transaction this output is in
@@ -145,18 +145,16 @@ module Bitcoin::Storage::Models
     # get the next input that references this output
     def get_next_in
       @store.get_txin_for_txout(get_tx.hash, @tx_idx)
-    rescue
-      nil
     end
 
     # get all addresses this txout corresponds to (if possible)
     def get_address
-      script.get_address
+      parsed_script.get_address
     end
 
     # get the single address this txout corresponds to (first for multisig tx)
     def get_addresses
-      script.get_addresses
+      parsed_script.get_addresses
     end
 
     def get_namecoin_name
@@ -164,11 +162,7 @@ module Bitcoin::Storage::Models
     end
 
     def type
-      script.type
-    end
-
-    def script
-      @_script = Bitcoin::Script.new(@pk_script)
+      parsed_script.type
     end
 
   end

@@ -20,7 +20,7 @@ module Bitcoin
       end
 
       def ==(other)
-        @value == other.value && @pk_script == other.pk_script
+        @value == other.value && @pk_script == other.pk_script rescue false
       end
 
       # parse raw binary data for transaction output
@@ -43,8 +43,8 @@ module Bitcoin
 
       alias :parse_payload :parse_data
 
-      def get_script
-        @script_cache || Bitcoin::Script.new(@pk_script)
+      def parsed_script
+        @parsed_script ||= Bitcoin::Script.new(pk_script)
       end
 
       def to_payload
@@ -56,10 +56,9 @@ module Bitcoin
       end
 
       def to_hash(options = {})
-        script = get_script
         h = { 'value' => "%.8f" % (@value / 100000000.0),
-          'scriptPubKey' => script.to_string }
-        h["address"] = script.get_address  if script.is_hash160? && options[:with_address]
+          'scriptPubKey' => parsed_script.to_string }
+        h["address"] = parsed_script.get_address  if parsed_script.is_hash160? && options[:with_address]
         h
       end
 
@@ -68,16 +67,17 @@ module Bitcoin
         script = Script.binary_from_string(output['scriptPubKey'])
         new(amount, script)
       end
+
       # set pk_script and pk_script_length
-      def pk_script=(script)
-        @pk_script_length, @pk_script = script.bytesize, script
+      def pk_script=(pk_script)
+        @pk_script_length, @pk_script = pk_script.bytesize, pk_script
       end
 
       alias :amount   :value
       alias :amount=  :value=
+
       alias :script   :pk_script
       alias :script=  :pk_script=
-
 
       # create output spending +value+ btc (base units) to +address+
       def self.value_to_address(value, address)

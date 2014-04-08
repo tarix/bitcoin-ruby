@@ -5,9 +5,7 @@ require_relative '../spec_helper'
 include Bitcoin::Builder
 
 Bitcoin.network = :testnet
-
-Bitcoin::Validation::Block::RETARGET = 10
-
+    
 [
  [:utxo, :sqlite, index_all_addrs: true],
  [:sequel, :sqlite], # [:sequel, :postgres],
@@ -28,10 +26,15 @@ Bitcoin::Validation::Block::RETARGET = 10
     @store = storage
     @store.reset
     def @store.in_sync?; true; end
+    
+    Bitcoin.network = :testnet
+    Bitcoin.network[:retarget_interval] = 10
     Bitcoin.network[:proof_of_work_limit] = Bitcoin.encode_compact_bits("ff"*32)
+    
     @key = Bitcoin::Key.generate
     @block0 = create_block "00"*32, false, [], @key
     Bitcoin.network[:genesis_hash] = @block0.hash
+    
     @store.store_block(@block0)
     @store.get_head.should == @block0
   end
@@ -196,7 +199,6 @@ Bitcoin::Validation::Block::RETARGET = 10
   end
 
   it "should handle existing blocks" do
-    Bitcoin.network = :testnet
     blocks = [@block0]
     3.times { blocks << create_block(blocks.last.hash, false) }
     blocks[1..-1].each.with_index {|b, idx| @store.store_block(b).should == [idx+1, 0] }
@@ -206,6 +208,7 @@ Bitcoin::Validation::Block::RETARGET = 10
 
   # see https://bitcointalk.org/index.php?topic=46370.0
   it "should pass reorg unit tests" do
+    # Disable difficulty checks. Hackish, should be replaced with some sane API.**
     class Bitcoin::Validation::Block; def difficulty; true; end; end
     Bitcoin.network = :bitcoin
     @store.import "./spec/bitcoin/fixtures/reorg/blk_0_to_4.dat"
@@ -226,6 +229,7 @@ Bitcoin::Validation::Block::RETARGET = 10
     balance("1KXFNhNtrRMfgbdiQeuJqnfD7dR4PhniyJ").should == 0
     balance("1JyMKvPHkrCQd8jQrqTR1rBsAd1VpRhTiE").should == 14000000000
     Bitcoin.network = :testnet
+    # Re-enable difficulty checks. Hackish, should be replaced with some sane API.
     class Bitcoin::Validation::Block
       def difficulty
         return true  if Bitcoin.network_name == :testnet3

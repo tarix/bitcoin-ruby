@@ -311,8 +311,6 @@ module Bitcoin
     end
 
 
-    RETARGET_INTERVAL = 2016
-
     # block count when the next retarget will take place.
     def block_next_retarget(block_height)
       (block_height + (RETARGET_INTERVAL-block_height.divmod(RETARGET_INTERVAL).last)) - 1
@@ -409,7 +407,8 @@ module Bitcoin
   @network = :bitcoin
 
   def self.network
-    NETWORKS[@network]
+    # Store the copy of network options so we can modify them in tests without breaking the defaults
+    @network_options ||= NETWORKS[@network].dup
   end
 
   def self.network_name
@@ -420,8 +419,9 @@ module Bitcoin
     @network_project
   end
 
-  def self.network= name
+  def self.network=(name)
     raise "Network descriptor '#{name}' not found."  unless NETWORKS[name.to_sym]
+    @network_options = nil # clear cached parameters
     @network = name.to_sym
     @network_project = network[:project] rescue nil
     Bitcoin::Namecoin.load  if namecoin?
@@ -433,13 +433,39 @@ module Bitcoin
   end
 
 
-  CENT =   1_000_000
-  COIN = 100_000_000
+  # maximum size of a block (in bytes)
   MAX_BLOCK_SIZE = 1_000_000
+  
+  # soft limit for new blocks
   MAX_BLOCK_SIZE_GEN = MAX_BLOCK_SIZE/2
-  MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE/50
+
+  # maximum number of signature operations in a block
+  MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE / 50
+
+  # maximum number of orphan transactions to be kept in memory
   MAX_ORPHAN_TRANSACTIONS = MAX_BLOCK_SIZE/100
 
+  # Threshold for lock_time: below this value it is interpreted as block number, otherwise as UNIX timestamp.
+  LOCKTIME_THRESHOLD = 500000000 # Tue Nov  5 00:53:20 1985 UTC
+
+  # maximum integer value
+  UINT32_MAX = 0xffffffff
+  INT_MAX = 0xffffffff # deprecated name, left here for compatibility with existing users.
+
+  # number of confirmations required before coinbase tx can be spent
+  COINBASE_MATURITY = 100
+
+  # interval (in blocks) for difficulty retarget
+  RETARGET_INTERVAL = 2016
+  RETARGET = 2016 # deprecated constant
+  
+  
+  # interval (in blocks) for mining reward reduction
+  REWARD_DROP = 210_000
+
+  CENT =   1_000_000
+  COIN = 100_000_000
+  
   MIN_FEE_MODE     = [ :block, :relay, :send ]
 
   NETWORKS = {
@@ -454,7 +480,8 @@ module Bitcoin
       :protocol_version => 70001,
       :coinbase_maturity => 100,
       :retarget_interval => 2016,
-      :retarget_time => 1209600, # 2 weeks
+      :retarget_time     => 1209600, # 2 weeks
+      :target_spacing    => 600, # block interval
       :max_money => 21_000_000 * COIN,
       :min_tx_fee => 10_000,
       :min_relay_tx_fee => 10_000,
@@ -484,6 +511,7 @@ module Bitcoin
         210000 => "000000000000048b95347e83192f69cf0366076336c639f9b7228e9ba171342e",
         216116 => "00000000000001b4f4b433e81ee46494af945cf96014816a4e2370f11b23df4e",
         225430 => "00000000000001c108384350f74090433e7fcf79a606b8e797f065b130575932",
+        290000 => "0000000000000000fa0b2badd05db0178623ebf8dd081fe7eb874c26e27d0b3b",
       }
     },
 
@@ -504,6 +532,7 @@ module Bitcoin
       :coinbase_maturity => 100,
       :retarget_interval => 2016,
       :retarget_time => 1209600, # 2 weeks
+      :target_spacing    => 600, # block interval
       :max_money => 21_000_000 * COIN,
       :min_tx_fee => 10_000,
       :min_relay_tx_fee => 10_000,
@@ -520,6 +549,7 @@ module Bitcoin
       :coinbase_maturity => 100,
       :retarget_interval => 2016,
       :retarget_time => 1209600, # 2 weeks
+      :target_spacing    => 600, # block interval
       :max_money => 21_000_000 * COIN,
       :min_tx_fee => 10_000,
       :min_relay_tx_fee => 10_000,
@@ -528,13 +558,14 @@ module Bitcoin
         "testnet-seed.bluematt.me",
       ],
       :genesis_hash => "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943",
-      :proof_of_work_limit => 0x1d07fff8,
+      :proof_of_work_limit => 0x1d00ffff,
       :alert_pubkeys => ["04302390343f91cc401d56d68b123028bf52e5fca1939df127f63c6467cdf9c8e2c14b61104cf817d0b780da337893ecc4aaff1309e536162dabbdb45200ca2b0a"],
       :known_nodes => [],
       :checkpoints => {
         # 542 contains invalid transaction
         542 => "0000000083c1f82cf72c6724f7a317325806384b06408bce7a4327f418dfd5ad",
         71018 => "000000000010dd93dc55541116b2744eb8f4c3b706df6e8512d231a03fb9e435",
+        200000 => "0000000000287bffd321963ef05feab753ebe274e1d78b2fd4e2bfe9ad3aa6f2",
       }
     },
 
@@ -648,6 +679,7 @@ module Bitcoin
         19200 => "d8a7c3e01e1e95bcee015e6fcc7583a2ca60b79e5a3aa0a171eddd344ada903d",
         24000 => "425ab0983cf04f43f346a4ca53049d0dc2db952c0a68eb0b55c3bb64108d5371",
         97778 => "7553b1e43da01cfcda4335de1caf623e941d43894bd81c2af27b6582f9d83c6f",
+        165000 => "823d7a54ebab04d14c4ba3508f6b5f25977406f4d389539eac0174d52c6b4b62",
       }
     },
 

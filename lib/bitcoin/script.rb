@@ -4,10 +4,26 @@ require 'bitcoin'
 
 class Bitcoin::Script
 
-  OP_1           = 81
-  OP_TRUE        = 81
   OP_0           = 0
   OP_FALSE       = 0
+  OP_1           = 81
+  OP_TRUE        = 81
+  OP_2           = 0x52
+  OP_3           = 0x53
+  OP_4           = 0x54
+  OP_5           = 0x55
+  OP_6           = 0x56
+  OP_7           = 0x57
+  OP_8           = 0x58
+  OP_9           = 0x59
+  OP_10          = 0x5a
+  OP_11          = 0x5b
+  OP_12          = 0x5c
+  OP_13          = 0x5d
+  OP_14          = 0x5e
+  OP_15          = 0x5f
+  OP_16          = 0x60
+  
   OP_PUSHDATA0   = 0
   OP_PUSHDATA1   = 76
   OP_PUSHDATA2   = 77
@@ -137,10 +153,15 @@ class Bitcoin::Script
   attr_reader :raw, :chunks, :debug
 
   # create a new script. +bytes+ is typically input_script + output_script
-  def initialize(bytes, offset=0)
-    @raw = bytes
+  def initialize(input_script, previous_output_script=nil)
+    @raw = if previous_output_script
+             input_script + [ Bitcoin::Script::OP_CODESEPARATOR ].pack("C") + previous_output_script
+           else
+             input_script
+           end
     @stack, @stack_alt, @exec_stack = [], [], []
-    @chunks = parse(bytes, offset)
+    @chunks = parse(@raw)
+    @last_codeseparator_index = 0
     @do_exec = true
   end
 
@@ -244,12 +265,41 @@ class Bitcoin::Script
   end
   alias :to_payload :to_binary
 
-
   def to_binary_without_signatures(drop_signatures, chunks=nil)
-    to_binary( (chunks || @chunks).select{|i| drop_signatures.none?{|e| e == i } } )
+    buf = []
+    (chunks || @chunks).each.with_index{|chunk,idx|
+      if chunk == OP_CODESEPARATOR and idx <= @last_codeseparator_index
+        buf.clear
+      elsif chunk == OP_CODESEPARATOR
+        # skip
+      elsif drop_signatures.none?{|e| e == chunk }
+        buf << chunk
+      end
+    }
+    to_binary(buf)
+  end
+  
+  # Adds opcode (OP_0, OP_1, ... OP_CHECKSIG etc.)
+  # Returns self.
+  def append_opcode(opcode)
+    raise "Opcode should be a Fixnum" if !opcode.is_a?(Fixnum)
+    if opcode >= OP_0 && opcode <= 0xff
+      @chunks << opcode
+    else
+      raise "Opcode should be within [0x00, 0xff]"
+    end
+    self
   end
 
-
+  # Adds binary string as pushdata. Pushdata will be encoded in the most compact form
+  # (unless the string contains internal info about serialization that's added by Script class)
+  # Returns self.
+  def append_pushdata(pushdata_string)
+    raise "Pushdata should be a string" if !pushdata_string.is_a?(String)
+    @chunks << pushdata_string
+    self
+  end
+  
   def self.pack_pushdata(data)
     size = data.bytesize
 
@@ -334,14 +384,16 @@ class Bitcoin::Script
 
     #p [to_string, block_timestamp, is_p2sh?]
     @script_invalid = true if @raw.bytesize > 10_000
+    @last_codeseparator_index = 0
 
     if block_timestamp >= 1333238400 # Pay to Script Hash (BIP 0016)
       return pay_to_script_hash(check_callback)  if is_p2sh?
     end
 
     @debug = []
-    @chunks.each{|chunk|
+    @chunks.each.with_index{|chunk,idx|
       break if invalid?
+      @chunk_last_index = idx
 
       @debug << @stack.map{|i| i.unpack("H*") rescue i}
       @do_exec = @exec_stack.count(false) == 0 ? true : false
@@ -405,6 +457,7 @@ class Bitcoin::Script
   def pay_to_script_hash(check_callback)
     return false if @chunks.size < 4
     *rest, script, _, script_hash, _ = @chunks
+    script = rest.pop if script == OP_CODESEPARATOR
     script, script_hash = cast_to_string(script), cast_to_string(script_hash)
 
     return false unless Bitcoin.hash160(script.unpack("H*")[0]) == script_hash.unpack("H*")[0]
@@ -427,17 +480,17 @@ class Bitcoin::Script
 
   # check if script is in one of the recognized standard formats
   def is_standard?
-    is_pubkey? || is_hash160? || is_multisig? || is_p2sh?
+    is_pubkey? || is_hash160? || is_multisig? || is_p2sh?  || is_op_return?
   end
 
-  # is this a pubkey tx
+  # is this a pubkey script
   def is_pubkey?
     return false if @chunks.size != 2
-    (@chunks[1] == OP_CHECKSIG) && @chunks[0].size > 1
+    (@chunks[1] == OP_CHECKSIG) && @chunks[0] && @chunks[0] != OP_RETURN
   end
   alias :is_send_to_ip? :is_pubkey?
 
-  # is this a hash160 (address) tx
+  # is this a hash160 (address) script
   def is_hash160?
     return false  if @chunks.size != 5
     (@chunks[0..1] + @chunks[-2..-1]) ==
@@ -445,10 +498,15 @@ class Bitcoin::Script
       @chunks[2].is_a?(String) && @chunks[2].bytesize == 20
   end
 
-  # is this a multisig tx
+  # is this a multisig script
   def is_multisig?
     return false  if @chunks.size > 6 || @chunks.size < 4 || !@chunks[-2].is_a?(Fixnum)
     @chunks[-1] == OP_CHECKMULTISIG and get_multisig_pubkeys.all?{|c| c.is_a?(String) }
+  end
+
+  # is this an op_return script
+  def is_op_return?
+    @chunks[0] == OP_RETURN && @chunks.size <= 2
   end
 
   # get type of this tx
@@ -457,6 +515,7 @@ class Bitcoin::Script
     elsif is_pubkey?;   :pubkey
     elsif is_multisig?; :multisig
     elsif is_p2sh?;     :p2sh
+    elsif is_op_return?;:op_return
     else;               :unknown
     end
   end
@@ -501,6 +560,12 @@ class Bitcoin::Script
 
   def get_p2sh_address
     Bitcoin.hash160_to_p2sh_address(get_hash160)
+  end
+
+  # get the data possibly included in an OP_RETURN script
+  def get_op_return_data
+    return nil  unless is_op_return?
+    cast_to_string(@chunks[1]).unpack("H*")[0]  if @chunks[1]
   end
 
   # get all addresses this script corresponds to (if possible)
@@ -551,6 +616,13 @@ class Bitcoin::Script
     [ [80 + m.to_i].pack("C"), *pubs, [80 + pubs.size].pack("C"), "\xAE"].join
   end
 
+  # generate OP_RETURN script with given data
+  def self.to_op_return_script(data = nil)
+    return "\x6A"  unless data
+    data = [data].pack("H*")
+    ["\x6A", [data.bytesize].pack("C"), data].join
+  end
+
   # generate pubkey script sig for given +signature+ and +pubkey+
   def self.to_pubkey_script_sig(signature, pubkey)
     hash_type = "\x01"
@@ -584,6 +656,72 @@ class Bitcoin::Script
     return false unless is_multisig?
     @chunks[0] - 80
   end
+  
+  # This matches CScript::GetSigOpCount(bool fAccurate)
+  # Note: this does not cover P2SH script which is to be unserialized 
+  #       and checked explicitly when validating blocks.
+  def sigops_count_accurate(is_accurate)
+    count = 0
+    last_opcode = nil
+    @chunks.each do |chunk| # pushdate or opcode
+      if chunk == OP_CHECKSIG || chunk == OP_CHECKSIGVERIFY
+        count += 1
+      elsif chunk == OP_CHECKMULTISIG || chunk == OP_CHECKMULTISIGVERIFY
+        # Accurate mode counts exact number of pubkeys required (not signatures, but pubkeys!). Only used in P2SH scripts.
+        # Inaccurate mode counts every multisig as 20 signatures.
+        if is_accurate && last_opcode && last_opcode.is_a?(Fixnum) && last_opcode >= OP_1 && last_opcode <= OP_16
+          count += ::Bitcoin::Script.decode_OP_N(last_opcode)
+        else     
+          count += 20
+        end
+      end
+      last_opcode = chunk
+    end
+    count
+  end
+  
+  # This method applies to script_sig that is an input for p2sh output.
+  # Bitcoind has somewhat special way to return count for invalid input scripts:
+  # it returns 0 when the opcode can't be parsed or when it's over OP_16.
+  # Also, if the OP_{N} is used anywhere it's treated as 0-length data.
+  # See CScript::GetSigOpCount(const CScript& scriptSig) in bitcoind.
+  def sigops_count_for_p2sh
+    # This is a pay-to-script-hash scriptPubKey;
+    # get the last item that the scriptSig
+    # pushes onto the stack:
+    
+    return 0 if @chunks.size == 0
+    
+    data = nil
+    @chunks.each do |chunk|
+      case chunk
+      when Fixnum
+        data = ""
+        return 0 if chunk > OP_16
+      when String
+        data = chunk
+      end
+    end
+    return 0 if data == ""
+    
+    ::Bitcoin::Script.new(data).sigops_count_accurate(true)
+  end
+  
+  # Converts OP_{0,1,2,...,16} into 0, 1, 2, ..., 16.
+  # Returns nil for other opcodes.
+  def self.decode_OP_N(opcode)
+    if opcode == OP_0
+      return 0
+    end
+    if opcode.is_a?(Fixnum) && opcode >= OP_1 && opcode <= OP_16
+      return opcode - (OP_1 - 1);
+    else
+      nil
+    end
+  end
+  
+  
+  
 
   ## OPCODES
 
@@ -984,6 +1122,7 @@ class Bitcoin::Script
   # to the data after the most recently-executed OP_CODESEPARATOR.
   def op_codeseparator
     @codehash_start = @chunks.size - @chunks.reverse.index(OP_CODESEPARATOR)
+    @last_codeseparator_index = @chunk_last_index
   end
 
   def codehash_script(opcode)
@@ -1009,18 +1148,21 @@ class Bitcoin::Script
 
     sig, hash_type = parse_sig(signature)
 
-    if inner_p2sh?
-      script_code = @inner_script_code || to_binary_without_signatures(drop_sigs)
-      drop_sigs = nil
-    else
-      script_code, drop_sigs = nil, nil
-    end
+    subscript = sighash_subscript(drop_sigs)
 
     if check_callback == nil # for tests
       @stack << 1
     else # real signature check callback
       @stack <<
-        ((check_callback.call(pubkey, sig, hash_type, drop_sigs, script_code) == true) ? 1 : 0)
+        ((check_callback.call(pubkey, sig, hash_type, subscript) == true) ? 1 : 0)
+    end
+  end
+
+  def sighash_subscript(drop_sigs)
+    if inner_p2sh? && @inner_script_code
+      ::Bitcoin::Script.new(@inner_script_code).to_binary_without_signatures(drop_sigs)
+    else
+      to_binary_without_signatures(drop_sigs)
     end
   end
 
@@ -1054,22 +1196,18 @@ class Bitcoin::Script
     n_sigs = pop_int
     return invalid if n_sigs < 0 || n_sigs > n_pubkeys
     return invalid if @stack.size < n_sigs
-    sigs = drop_sigs = pop_string(n_sigs)
+    sigs = pop_string(n_sigs)
+    drop_sigs = sigs.dup
 
     @stack.pop if @stack[-1] && cast_to_bignum(@stack[-1]) == 0 # remove OP_0 from stack
 
-    if inner_p2sh?
-      script_code = @inner_script_code || to_binary_without_signatures(drop_sigs)
-      drop_sigs = nil
-    else
-      script_code, drop_sigs = nil, nil
-    end
+    subscript = sighash_subscript(drop_sigs)
 
     success = true
     while success && n_sigs > 0
       sig, pub = sigs.pop, pubkeys.pop
       signature, hash_type = parse_sig(sig)
-      if check_callback.call(pub, signature, hash_type, drop_sigs, script_code)
+      if check_callback.call(pub, signature, hash_type, subscript)
         n_sigs -= 1
       else
         sigs << sig

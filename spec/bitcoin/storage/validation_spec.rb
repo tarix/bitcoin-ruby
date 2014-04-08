@@ -152,13 +152,13 @@ Bitcoin.network = :spec
     block3 = create_block(block2.hash, false, [], @key, 60e8)
     -> { @store.store_block(block3) }.should.raise(ValidationError)
 
-    Bitcoin::Validation::REWARD_DROP = 2
+    Bitcoin::REWARD_DROP = 2
     block4 = create_block(block2.hash, false, [], @key, 50e8)
     -> { @store.store_block(block4) }.should.raise(ValidationError)
 
     block5 = create_block(block2.hash, false, [], @key, 25e8)
     @store.store_block(block5).should == [3, 0]
-    Bitcoin::Validation::REWARD_DROP = 210_000
+    Bitcoin::REWARD_DROP = 210_000
   end
 
 end
@@ -214,10 +214,10 @@ describe "transaction rules (#{options[0]} - #{options[1]})" do
   end
 
   it "3. Size in bytes < MAX_BLOCK_SIZE" do
-    max = Bitcoin::Validation::MAX_BLOCK_SIZE; Bitcoin::Validation::MAX_BLOCK_SIZE = 1000
+    max = Bitcoin::MAX_BLOCK_SIZE; Bitcoin::MAX_BLOCK_SIZE = 1000
     check_tx(@tx, [:max_size, [@tx.payload.bytesize+978, 1000]]) {|tx|
       tx.out[0].pk_script = "\x00" * 1001 }
-    Bitcoin::Validation::MAX_BLOCK_SIZE = max
+    Bitcoin::MAX_BLOCK_SIZE = max
   end
 
   it "4. Each output value, as well as the total, must be in legal money range" do
@@ -232,8 +232,8 @@ describe "transaction rules (#{options[0]} - #{options[1]})" do
     end
   end
 
-  it "6. Check that nLockTime <= INT_MAX, size in bytes >= 100, and sig opcount <= 2" do
-    check_tx(@tx, [:lock_time, [INT_MAX + 1, INT_MAX]]) {|tx| tx.lock_time = INT_MAX + 1 }
+  it "6. Check that nLockTime <= UINT32_MAX, size in bytes >= 100, and sig opcount <= 2" do
+    check_tx(@tx, [:lock_time, [Bitcoin::UINT32_MAX + 1, Bitcoin::UINT32_MAX]]) {|tx| tx.lock_time = Bitcoin::UINT32_MAX + 1 }
     # TODO: validate sig opcount
   end
 
@@ -258,7 +258,7 @@ describe "transaction rules (#{options[0]} - #{options[1]})" do
     if @store.class.name =~ /Utxo/
       check_tx(@tx, [:prev_out, [[@tx.in[0].prev_out.reverse_hth, 0]]])
     else
-      check_tx(@tx, [:spent, [0]])
+      check_tx(@tx, [:not_spent, [0]])
     end
   end
   
@@ -270,6 +270,27 @@ describe "transaction rules (#{options[0]} - #{options[1]})" do
   it "16. Reject if the sum of input values < sum of output values" do
     tx = build_tx {|t| create_tx(t, @block1.tx.first, 0, [[100e8, @key]]) }
     check_tx(tx, [:output_sum, [100e8, 50e8]])
+  end
+
+
+  it "should not allow double spend within the same block" do
+    # double-spend output from previous block
+    prev_tx = @block1.tx[0]
+    block = create_block @block1.hash, false, [
+     ->(t) { create_tx(t, prev_tx, 0, [[prev_tx.out[0].value, @key]]) },
+     ->(t) { create_tx(t, prev_tx, 0, [[prev_tx.out[0].value, @key]]) }
+    ]
+    -> { @store.store_block(block) }.should.raise(Bitcoin::Validation::ValidationError)
+
+    # double-spend output from current block
+    block = create_block @block1.hash, false, [
+      ->(t) { create_tx(t, prev_tx, 0, [[prev_tx.out[0].value, @key]]) }
+    ]
+    prev_tx = block.tx[1]
+    block.tx << build_tx {|t| create_tx(t, prev_tx, 0, [[prev_tx.out[0].value, @key]]) }
+    block.tx << build_tx {|t| create_tx(t, prev_tx, 0, [[prev_tx.out[0].value, @key]]) }
+    block.recalc_mrkl_root; block.recalc_block_hash
+    -> { @store.store_block(block) }.should.raise(Bitcoin::Validation::ValidationError)
   end
 
 end

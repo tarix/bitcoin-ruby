@@ -200,6 +200,37 @@ describe 'Tx' do
     outpoint_tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-a6ce7081addade7676cd2af75c4129eba6bf5e179a19c40c7d4cf6a5fe595954.json'))
     outpoint_tx.hash.should == "a6ce7081addade7676cd2af75c4129eba6bf5e179a19c40c7d4cf6a5fe595954"
     tx.verify_input_signature(0, outpoint_tx).should == true
+
+    # drop OP_CODESEPARATOR in subscript for signature_hash_for_input
+    tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-46224764c7870f95b58f155bce1e38d4da8e99d42dbb632d0dd7c07e092ee5aa.json'))
+    tx.hash.should == "46224764c7870f95b58f155bce1e38d4da8e99d42dbb632d0dd7c07e092ee5aa"
+    outpoint_tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-bc7fd132fcf817918334822ee6d9bd95c889099c96e07ca2c1eb2cc70db63224.json'))
+    outpoint_tx.hash.should == "bc7fd132fcf817918334822ee6d9bd95c889099c96e07ca2c1eb2cc70db63224"
+    tx.verify_input_signature(0, outpoint_tx).should == true
+
+    # drop OP_CODESEPARATOR in subscript for signature_hash_for_input
+    tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-aab7ef280abbb9cc6fbaf524d2645c3daf4fcca2b3f53370e618d9cedf65f1f8.json'))
+    tx.hash.should == "aab7ef280abbb9cc6fbaf524d2645c3daf4fcca2b3f53370e618d9cedf65f1f8"
+    outpoint_tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-326882a7f22b5191f1a0cc9962ca4b878cd969cf3b3a70887aece4d801a0ba5e.json'))
+    outpoint_tx.hash.should == "326882a7f22b5191f1a0cc9962ca4b878cd969cf3b3a70887aece4d801a0ba5e"
+    tx.verify_input_signature(0, outpoint_tx).should == true
+
+    # drop multisig OP_CODESEPARATOR in subscript for signature_hash_for_input
+    tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-6327783a064d4e350c454ad5cd90201aedf65b1fc524e73709c52f0163739190.json'))
+    tx.hash.should == "6327783a064d4e350c454ad5cd90201aedf65b1fc524e73709c52f0163739190"
+    outpoint_tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-a955032f4d6b0c9bfe8cad8f00a8933790b9c1dc28c82e0f48e75b35da0e4944.json'))
+    outpoint_tx.hash.should == "a955032f4d6b0c9bfe8cad8f00a8933790b9c1dc28c82e0f48e75b35da0e4944"
+    tx.verify_input_signature(0, outpoint_tx).should == true
+
+    # OP_DUP OP_HASH160
+    tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-5df1375ffe61ac35ca178ebb0cab9ea26dedbd0e96005dfcee7e379fa513232f.json'))
+    tx.hash.should == "5df1375ffe61ac35ca178ebb0cab9ea26dedbd0e96005dfcee7e379fa513232f"
+    outpoint_tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-b5b598de91787439afd5938116654e0b16b7a0d0f82742ba37564219c5afcbf9.json'))
+    outpoint_tx.hash.should == "b5b598de91787439afd5938116654e0b16b7a0d0f82742ba37564219c5afcbf9"
+    tx.verify_input_signature(0, outpoint_tx).should == true
+    outpoint_tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-ab9805c6d57d7070d9a42c5176e47bb705023e6b67249fb6760880548298e742.json'))
+    outpoint_tx.hash.should == "ab9805c6d57d7070d9a42c5176e47bb705023e6b67249fb6760880548298e742"
+    tx.verify_input_signature(1, outpoint_tx).should == true
   end
 
   it '#sign_input_signature' do
@@ -261,6 +292,95 @@ describe 'Tx' do
     prev_tx.hash.should == "52250a162c7d03d2e1fbc5ebd1801a88612463314b55102171c5b5d817d2d7b2"
     #File.open("rawtx-#{prev_tx.hash}.json",'wb'){|f| f.print prev_tx.to_json }
   end
+  
+  it "#legacy_sigops_count" do
+    Tx.new(@payload[0]).legacy_sigops_count.should == 2
+    Tx.new(@payload[1]).legacy_sigops_count.should == 2
+    Tx.new(@payload[2]).legacy_sigops_count.should == 2
+    
+    # Test sig ops count in inputs too.
+    tx = Tx.new
+    txin = TxIn.new
+    txin.script_sig = Bitcoin::Script.from_string("10 OP_CHECKMULTISIGVERIFY OP_CHECKSIGVERIFY").to_binary
+    tx.add_in(txin)
+    txout = TxOut.new
+    txout.pk_script = Bitcoin::Script.from_string("5 OP_CHECKMULTISIG OP_CHECKSIG").to_binary
+    tx.add_out(txout)
+    tx.legacy_sigops_count.should == (20 + 1 + 20 + 1)
+    
+  end
+  
+  describe "Tx - is_final?" do
+    it "should be final if lock_time == 0" do
+      tx = Tx.new
+      tx.lock_time = 0
+      tx.is_final?(0,0).should == true
+      
+      # even if has non-final input:
+      txin = TxIn.new
+      txin.sequence = "\x01\x00\x00\x00"
+      tx.add_in(txin)
+      tx.is_final?(0,0).should == true
+    end
+    
+    it "should be final if lock_time is below block_height" do
+      tx = Tx.new
+      txin = TxIn.new
+      txin.sequence = "\x01\x00\x00\x00"
+      tx.add_in(txin)
+      tx.lock_time = 6543
+      tx.is_final?(6000,0).should == false
+      tx.is_final?(6543,0).should == false # when equal to block height, still not final
+      tx.is_final?(6544,0).should == true
+      tx.is_final?(9999,0).should == true
+    end
+    
+    it "should be final if lock_time is below timestamp" do
+      tx = Tx.new
+      txin = TxIn.new
+      txin.sequence = "\xff\xff\xff\xff"
+      tx.add_in(txin)
+      txin = TxIn.new
+      txin.sequence = "\x01\x00\x00\x00"
+      tx.add_in(txin)
+      tx.lock_time = Bitcoin::LOCKTIME_THRESHOLD # when equal, interpreted as threshold
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD - 1).should == false
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD).should == false # when equal to timestamp, still not final
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD + 1).should == true
+      
+      tx.lock_time = Bitcoin::LOCKTIME_THRESHOLD + 666
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD + 1).should == false
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD + 666).should == false # when equal to timestamp, still not final
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD + 667).should == true
+    end
+    
+    it "should be final if all inputs are finalized regardless of lock_time" do
+      tx = Tx.new
+      txin = TxIn.new
+      txin.sequence = "\xff\xff\xff\xff"
+      tx.add_in(txin)
+      txin = TxIn.new
+      txin.sequence = "\xff\xff\xff\xff"
+      tx.add_in(txin)
+      
+      tx.lock_time = 6543
+      tx.is_final?(6000,0).should == true
+      tx.is_final?(6543,0).should == true
+      tx.is_final?(6544,0).should == true
+      tx.is_final?(9999,0).should == true
+      
+      tx.lock_time = Bitcoin::LOCKTIME_THRESHOLD
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD - 1).should == true
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD).should == true
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD + 1).should == true
+      
+      tx.lock_time = Bitcoin::LOCKTIME_THRESHOLD + 666
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD + 1).should == true
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD + 666).should == true
+      tx.is_final?(0,Bitcoin::LOCKTIME_THRESHOLD + 667).should == true
+    end
+    
+  end
 
   it '#calculate_minimum_fee' do
     tx = Tx.new( fixtures_file('rawtx-b5d4e8883533f99e5903ea2cf001a133a322fa6b1370b18a16c57c946a40823d.bin') )
@@ -269,6 +389,14 @@ describe 'Tx' do
     tx = Tx.from_json(fixtures_file('bc179baab547b7d7c1d5d8d6f8b0cc6318eaa4b0dd0a093ad6ac7f5a1cb6b3ba.json'))
     tx.minimum_relay_fee.should == 0
     tx.minimum_block_fee.should == 10_000
+  end
+
+  it "should compare transactions" do
+    tx1 = Tx.new( @payload[0] )
+    tx2 = Tx.new( @payload[1] )
+    (tx1 == Bitcoin::P::Tx.from_json(tx1.to_json)).should == true
+    (tx1 == tx2).should == false
+    (tx1 == nil).should == false
   end
 
   describe "Tx - BIP Scripts" do
@@ -283,6 +411,11 @@ describe 'Tx' do
       tx      = Tx.from_json( fixtures_file('rawtx-ba1ff5cd66713133c062a871a8adab92416f1e38d17786b2bf56ac5f6ffdfdf5.json') )
       prev_tx = Tx.from_json( fixtures_file("rawtx-de35d060663750b3975b7997bde7fb76307cec5b270d12fcd9c4ad98b279c28c.json") )
       tx.verify_input_signature(0, prev_tx).should == true
+
+      # checkmultisig for testnet3 tx: 2c63aa814701cef5dbd4bbaddab3fea9117028f2434dddcdab8339141e9b14d1 input index 1
+      tx      = Tx.from_json( fixtures_file('tx-2c63aa814701cef5dbd4bbaddab3fea9117028f2434dddcdab8339141e9b14d1.json') )
+      prev_tx = Tx.from_json( fixtures_file("tx-19aa42fee0fa57c45d3b16488198b27caaacc4ff5794510d0c17f173f05587ff.json") )
+      tx.verify_input_signature(1, prev_tx).should == true
     end
 
     it "should do P2SH with inner OP_CHECKMULTISIG (BIP 0016)" do
