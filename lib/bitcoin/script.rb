@@ -407,7 +407,7 @@ class Bitcoin::Script
           break
         end
 
-        next unless (@do_exec || (OP_IF <= chunk && chunk <= OP_ENDIF))
+        next @debug.pop  unless (@do_exec || (OP_IF <= chunk && chunk <= OP_ENDIF))
 
         case chunk
         when *OPCODES_METHOD.keys
@@ -426,6 +426,8 @@ class Bitcoin::Script
         if @do_exec
           @debug << "PUSH DATA #{chunk.unpack("H*")[0]}"
           @stack << chunk
+        else
+          @debug.pop
         end
       end
     }
@@ -471,7 +473,19 @@ class Bitcoin::Script
   def inner_p2sh!(script=nil); @inner_p2sh = true; @inner_script_code = script; self; end
   def inner_p2sh?; @inner_p2sh; end
 
+  # get the inner p2sh script
+  def inner_p2sh_script
+    return nil if @chunks.size < 4
+    *rest, script, _, script_hash, _ = @chunks
+    script = rest.pop if script == OP_CODESEPARATOR
+    script, script_hash = cast_to_string(script), cast_to_string(script_hash)
+
+    return nil unless Bitcoin.hash160(script.unpack("H*")[0]) == script_hash.unpack("H*")[0]
+    script
+  end
+
   def is_pay_to_script_hash?
+    return false  if @inner_p2sh
     return false  unless @chunks[-2].is_a?(String)
     @chunks.size >= 3 && @chunks[-3] == OP_HASH160 &&
       @chunks[-2].bytesize == 20 && @chunks[-1] == OP_EQUAL
@@ -500,7 +514,7 @@ class Bitcoin::Script
 
   # is this a multisig script
   def is_multisig?
-    return false  if @chunks.size > 6 || @chunks.size < 4 || !@chunks[-2].is_a?(Fixnum)
+    return false  if @chunks.size < 4 || !@chunks[-2].is_a?(Fixnum)
     @chunks[-1] == OP_CHECKMULTISIG and get_multisig_pubkeys.all?{|c| c.is_a?(String) }
   end
 
@@ -876,6 +890,7 @@ class Bitcoin::Script
     @stack << (a + 1)
   end
 
+  # 1 is subtracted from the input.
   def op_1sub
     a = pop_int
     @stack << (a - 1)
@@ -1166,6 +1181,7 @@ class Bitcoin::Script
     end
   end
 
+  # Same as OP_CHECKSIG, but OP_VERIFY is executed afterward.
   def op_checksigverify(check_callback)
     op_checksig(check_callback)
     op_verify
@@ -1224,6 +1240,7 @@ class Bitcoin::Script
     @stack << (success ? 1 : 0)
   end
 
+  # Same as OP_CHECKMULTISIG, but OP_VERIFY is executed afterward.
   def op_checkmultisigverify(check_callback)
     op_checkmultisig(check_callback)
     op_verify

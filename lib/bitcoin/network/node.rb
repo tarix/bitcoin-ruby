@@ -54,9 +54,12 @@ module Bitcoin::Network
       :connect => [],
       :command => ["127.0.0.1", 9999],
       :storage => "utxo::sqlite://~/.bitcoin-ruby/<network>/blocks.db",
+      :announce => false,
+      :external_port => nil,
       :mode => :full,
       :cache_head => true,
       :index_nhash => false,
+      :index_p2sh_type => false,
       :dns => true,
       :epoll_limit => 10000,
       :epoll_user => nil,
@@ -106,6 +109,7 @@ module Bitcoin::Network
       @store = Bitcoin::Storage.send(backend, {
           db: config, mode: @config[:mode], cache_head: @config[:cache_head],
           skip_validation: @config[:skip_validation], index_nhash: @config[:index_nhash],
+          index_p2sh_type: @config[:index_p2sh_type],
           log_level: @config[:log][:storage]}, ->(locator) {
           peer = @connections.select(&:connected?).sample
           peer.send_getblocks(locator)
@@ -476,6 +480,12 @@ module Bitcoin::Network
       @config[:listen][0]
     end
 
+    # get the external port
+    # assume the same as local port if config option :external_port isn't given explicitly
+    def external_port
+      @config[:external_port] || @config[:listen][1] || Bitcoin.network[:default_port]
+    end
+
     # push notification +message+ to +channel+
     def push_notification channel, message
       @notifiers[channel.to_sym].push(message)  if @notifiers[channel.to_sym]
@@ -492,6 +502,14 @@ module Bitcoin::Network
     # should the node accept new incoming connections?
     def accept_connections?
       connections.select(&:incoming?).size < config[:max][:connections_in]
+    end
+
+    # get Addr object for our own server
+    def addr
+      @addr = Bitcoin::P::Addr.new
+      @addr.time, @addr.service, @addr.ip, @addr.port =
+        Time.now.tv_sec, (1 << 0), external_ip, external_port
+      @addr
     end
 
   end
