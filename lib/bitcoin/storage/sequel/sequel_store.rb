@@ -7,7 +7,7 @@ module Bitcoin::Storage::Backends
 
   # Storage backend using Sequel to connect to arbitrary SQL databases.
   # Inherits from StoreBase and implements its interface.
-  class SequelStore < StoreBase
+  class SequelStore < SequelStoreBase
 
     # sequel database connection
     attr_accessor :db
@@ -274,6 +274,12 @@ module Bitcoin::Storage::Backends
     # get block by given +id+
     def get_block_by_id(block_id)
       wrap_block(@db[:blk][:id => block_id])
+    end
+
+    # get block id in the main chain by given +tx_id+
+    def get_block_id_for_tx_id(tx_id)
+      @db[:blk_tx].join(:blk, id: :blk_id)
+        .where(tx_id: tx_id, chain: MAIN).first[:blk_id] rescue nil
     end
 
     # get transaction for given +tx_hash+

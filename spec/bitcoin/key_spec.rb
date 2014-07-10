@@ -181,6 +181,46 @@ describe "Bitcoin::Key" do
     k.compressed.should == false
   end
 
+  it "should handle private key in bip38 (non-ec-multiply) format" do
+    k = Bitcoin::Key.from_base58("5KN7MzqK5wt2TP1fQCYyHBtDrXdJuXbUzm4A9rKAteGu3Qi5CVR")
+    k.to_bip38("TestingOneTwoThree").should == "6PRVWUbkzzsbcVac2qwfssoUJAN1Xhrg6bNk8J7Nzm5H7kxEbn2Nh2ZoGg"
+
+    k = Bitcoin::Key.from_bip38("6PRVWUbkzzsbcVac2qwfssoUJAN1Xhrg6bNk8J7Nzm5H7kxEbn2Nh2ZoGg", "TestingOneTwoThree")
+    k.to_base58.should == "5KN7MzqK5wt2TP1fQCYyHBtDrXdJuXbUzm4A9rKAteGu3Qi5CVR"
+
+    k = Bitcoin::Key.from_base58("5HtasZ6ofTHP6HCwTqTkLDuLQisYPah7aUnSKfC7h4hMUVw2gi5")
+    k.to_bip38("Satoshi").should == "6PRNFFkZc2NZ6dJqFfhRoFNMR9Lnyj7dYGrzdgXXVMXcxoKTePPX1dWByq"
+
+    k = Bitcoin::Key.from_bip38("6PRNFFkZc2NZ6dJqFfhRoFNMR9Lnyj7dYGrzdgXXVMXcxoKTePPX1dWByq", "Satoshi")
+    k.to_base58.should == "5HtasZ6ofTHP6HCwTqTkLDuLQisYPah7aUnSKfC7h4hMUVw2gi5"
+
+    k = Bitcoin::Key.from_base58("L44B5gGEpqEDRS9vVPz7QT35jcBG2r3CZwSwQ4fCewXAhAhqGVpP")
+    k.to_bip38("TestingOneTwoThree").should == "6PYNKZ1EAgYgmQfmNVamxyXVWHzK5s6DGhwP4J5o44cvXdoY7sRzhtpUeo"
+
+    k = Bitcoin::Key.from_bip38("6PYNKZ1EAgYgmQfmNVamxyXVWHzK5s6DGhwP4J5o44cvXdoY7sRzhtpUeo", "TestingOneTwoThree")
+    k.to_base58.should == "L44B5gGEpqEDRS9vVPz7QT35jcBG2r3CZwSwQ4fCewXAhAhqGVpP"
+
+    k = Bitcoin::Key.from_base58("KwYgW8gcxj1JWJXhPSu4Fqwzfhp5Yfi42mdYmMa4XqK7NJxXUSK7")
+    k.to_bip38("Satoshi").should == "6PYLtMnXvfG3oJde97zRyLYFZCYizPU5T3LwgdYJz1fRhh16bU7u6PPmY7"
+
+    k = Bitcoin::Key.from_bip38("6PYLtMnXvfG3oJde97zRyLYFZCYizPU5T3LwgdYJz1fRhh16bU7u6PPmY7", "Satoshi")
+    k.to_base58.should == "KwYgW8gcxj1JWJXhPSu4Fqwzfhp5Yfi42mdYmMa4XqK7NJxXUSK7"
+  end
+
+  it "should generate private key from warp format" do
+    k = Bitcoin::Key.from_warp("ER8FT+HFjk0", "7DpniYifN6c")
+    k.addr.should == "1J32CmwScqhwnNQ77cKv9q41JGwoZe2JYQ"
+    k.to_base58.should == "5JfEekYcaAexqcigtFAy4h2ZAY95vjKCvS1khAkSG8ATo1veQAD"
+
+    k = Bitcoin::Key.from_warp("YqIDBApDYME", "G34HqIgjrIc")
+    k.addr.should == "19aKBeXe2mi4NbQRpYUrCLZtRDHDUs9J7J"
+    k.to_base58.should == "5KUJA5iZ2zS7AXkU2S8BiBVY3xj6F8GspLfWWqL9V7CajXumBQV"
+
+    k = Bitcoin::Key.from_warp("FPdAxCygMJg", "X+qaSwhUYXw")
+    k.addr.should == "14Pqeo9XNRxjtKFFYd6TvRrJuZxVpciS81"
+    k.to_base58.should == "5JBAonQ4iGKFJxENExZghDtAS6YB8BsCw5mwpHSvZvP3Q2UxmT1"
+  end
+
 end
 
 begin
