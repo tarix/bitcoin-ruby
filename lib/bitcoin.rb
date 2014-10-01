@@ -4,7 +4,7 @@
 require 'digest/sha2'
 require 'digest/rmd160'
 require 'openssl'
-
+require 'securerandom'
 
 module Bitcoin
 
@@ -127,6 +127,11 @@ module Bitcoin
 
     def pubkey_to_address(pubkey)
       hash160_to_address( hash160(pubkey) )
+    end
+
+    def pubkeys_to_p2sh_multisig_address(m, *pubkeys)
+      redeem_script = Bitcoin::Script.to_p2sh_multisig_script(m, *pubkeys).last
+      return Bitcoin.hash160_to_p2sh_address(Bitcoin.hash160(redeem_script.hth)), redeem_script
     end
 
     def int_to_base58(int_val, leading_zero_bytes=0)
@@ -324,7 +329,7 @@ module Bitcoin
       raise "malformed signature"       unless signature.bytesize == 65
       pubkey = Bitcoin::OpenSSL_EC.recover_compact(hash, signature)
       pubkey_to_address(pubkey) == address if pubkey
-    rescue Exception => ex
+    rescue => ex
       p [ex.message, ex.backtrace]; false
     end
 
@@ -369,7 +374,7 @@ module Bitcoin
 
     # shows the total number of Bitcoins in circulation, reward era and reward in that era.
     def blockchain_total_btc(height)
-      reward, interval = 5000000000, 210000
+      reward, interval = Bitcoin.network[:reward_base], Bitcoin.network[:reward_halving]
       total_btc = reward
       reward_era, remainder = (height).divmod(interval)
       reward_era.times{
@@ -381,7 +386,16 @@ module Bitcoin
     end
 
     def block_creation_reward(block_height)
-      5000000000 / (2 ** (block_height / 210000.0).floor)
+      if (Bitcoin.network_project == :dogecoin) && block_height < Bitcoin.network[:difficulty_change_block]
+        # Dogecoin early rewards were random, using part of the hash of the
+        # previous block as the seed for the Mersenne Twister algorithm.
+        # Given we don't have previous block hash available, and this value is
+        # functionally a maximum (not exact value), I'm using the maximum the random
+        # reward generator can produce and calling it good enough.
+        Bitcoin.network[:reward_base] / (2 ** (block_height / Bitcoin.network[:reward_halving].to_f).floor) * 2
+      else
+        Bitcoin.network[:reward_base] / (2 ** (block_height / Bitcoin.network[:reward_halving].to_f).floor)
+      end
     end
   end
 
@@ -446,14 +460,14 @@ module Bitcoin
     @network
   end
 
-  [:bitcoin, :namecoin, :litecoin, :freicoin].each do |n|
+  [:bitcoin, :namecoin, :litecoin, :dogecoin].each do |n|
     instance_eval "def #{n}?; network_project == :#{n}; end"
   end
 
 
   # maximum size of a block (in bytes)
   MAX_BLOCK_SIZE = 1_000_000
-  
+
   # soft limit for new blocks
   MAX_BLOCK_SIZE_GEN = MAX_BLOCK_SIZE/2
 
@@ -476,14 +490,14 @@ module Bitcoin
   # interval (in blocks) for difficulty retarget
   RETARGET_INTERVAL = 2016
   RETARGET = 2016 # deprecated constant
-  
-  
+
+
   # interval (in blocks) for mining reward reduction
   REWARD_DROP = 210_000
 
   CENT =   1_000_000
   COIN = 100_000_000
-  
+
   MIN_FEE_MODE     = [ :block, :relay, :send ]
 
   NETWORKS = {
@@ -497,6 +511,8 @@ module Bitcoin
       :default_port => 8333,
       :protocol_version => 70001,
       :coinbase_maturity => 100,
+      :reward_base => 50 * COIN,
+      :reward_halving => 210_000,
       :retarget_interval => 2016,
       :retarget_time     => 1209600, # 2 weeks
       :target_spacing    => 600, # block interval
@@ -538,6 +554,34 @@ module Bitcoin
       }
     },
 
+    :regtest => {
+      :project => :bitcoin,
+      :magic_head => "\xFA\xBF\xB5\xDA",
+      :address_version => "6f",
+      :p2sh_version => "c4",
+      :privkey_version => "ef",
+      :default_port => 18444,
+      :max_money => 21_000_000 * COIN,
+      :dns_seeds => [ ],
+      :genesis_hash => "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
+      :proof_of_work_limit => (1<<255) - 1,
+      :alert_pubkeys => ["04302390343f91cc401d56d68b123028bf52e5fca1939df127f63c6467cdf9c8e2c14b61104cf817d0b780da337893ecc4aaff1309e536162dabbdb45200ca2b0a"],
+      :known_nodes => [],
+      :checkpoints => {},
+      :coinbase_maturity => 100,
+      :reward_base => 50 * COIN,
+      :reward_halving => 210_000,
+      :retarget_interval => 2016,
+      :retarget_time => 1209600, # 2 weeks
+      :target_spacing    => 600, # block interval
+      :max_money => 21_000_000 * COIN,
+      :min_tx_fee => 10_000,
+      :min_relay_tx_fee => 10_000,
+      :free_tx_bytes => 1_000,
+      :dust => CENT,
+      :per_dust_fee => false,
+    },
+
     :testnet => {
       :project => :bitcoin,
       :magic_head => "\xFA\xBF\xB5\xDA",
@@ -553,6 +597,8 @@ module Bitcoin
       :known_nodes => [],
       :checkpoints => {},
       :coinbase_maturity => 100,
+      :reward_base => 50 * COIN,
+      :reward_halving => 210_000,
       :retarget_interval => 2016,
       :retarget_time => 1209600, # 2 weeks
       :target_spacing    => 600, # block interval
@@ -573,6 +619,8 @@ module Bitcoin
       :default_port => 18333,
       :protocol_version => 70001,
       :coinbase_maturity => 100,
+      :reward_base => 50 * COIN,
+      :reward_halving => 210_000,
       :retarget_interval => 2016,
       :retarget_time => 1209600, # 2 weeks
       :target_spacing    => 600, # block interval
@@ -584,6 +632,8 @@ module Bitcoin
       :dust => CENT,
       :per_dust_fee => false,
       :dns_seeds => [
+        "testnet-seed.alexykot.me",
+        "testnet-seed.bitcoin.schildbach.de",
         "testnet-seed.bitcoin.petertodd.org",
         "testnet-seed.bluematt.me",
       ],
@@ -615,6 +665,8 @@ module Bitcoin
       :dust => CENT / 10,
       :per_dust_fee => true,
       :coinbase_maturity => 100,
+      :reward_base => 50 * COIN,
+      :reward_halving => 840_000,
       :retarget_interval => 2016,
       :retarget_time => 302400, # 3.5 days
       :dns_seeds => [
@@ -625,7 +677,7 @@ module Bitcoin
         "dnsseed.weminemnc.com",
       ],
       :genesis_hash => "12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2",
-      :proof_of_work_limit => 0,
+      :proof_of_work_limit => 0x1e0fffff,
       :alert_pubkeys => ["040184710fa689ad5023690c80f3a49c8f13f8d45b8c857fbcbc8bc4a8e4d3eb4b10f4d4604fa08dce601aaf0f470216fe1b51850b4acf21b179c45070ac7b03a9"],
       :known_nodes => [],
       :checkpoints => {
@@ -663,6 +715,8 @@ module Bitcoin
       :per_dust_fee => true,
       :free_tx_bytes => 5_000,
       :coinbase_maturity => 100,
+      :reward_base => 50 * COIN,
+      :reward_halving => 840_000,
       :retarget_interval => 2016,
       :retarget_time => 302400, # 3.5 days
       :max_money => 84_000_000 * COIN,
@@ -672,7 +726,7 @@ module Bitcoin
         "testnet-seed.weminemnc.com",
       ],
       :genesis_hash => "f5ae71e26c74beacc88382716aced69cddf3dffff24f384e1808905e0188f68f",
-      :proof_of_work_limit => 0,
+      :proof_of_work_limit => 0x1e0fffff,
       :alert_pubkeys => ["04302390343f91cc401d56d68b123028bf52e5fca1939df127f63c6467cdf9c8e2c14b61104cf817d0b780da337893ecc4aaff1309e536162dabbdb45200ca2b0a"],
       :known_nodes => [],
       :checkpoints => {
@@ -680,30 +734,104 @@ module Bitcoin
       }
     },
 
-
-    :freicoin => {
-      :project => :freicoin,
-      :magic_head => "\x2c\xfe\x7e\x6d",
-      :address_version => "00",
-      :p2sh_version => "05",
-      :privkey_version => "80",
-      :default_port => 8639,
-      :protocol_version => 60002,
-      :max_money => 21_000_000 * COIN,
-      :min_tx_fee => 50_000,
-      :min_relay_tx_fee => 10_000,
-      :free_tx_bytes => 1_000,
-      :dust => CENT,
-      :per_dust_fee => false,
-      :dns_seeds => [ "seed.freico.in", "fledge.freico.in" ],
-      :genesis_hash => "000000005b1e3d23ecfd2dd4a6e1a35238aa0392c0a8528c40df52376d7efe2c",
-      :proof_of_work_limit => 0,
+    :dogecoin => {
+      :project => :dogecoin,
+      :magic_head => "\xc0\xc0\xc0\xc0",
+      :address_version => "1e",
+      :p2sh_version => "16",
+      :privkey_version => "9e",
+      :default_port => 22556,
+      :protocol_version => 70003,
+      :max_money => 100_000_000_000 * COIN,
+      :min_tx_fee => COIN,
+      :min_relay_tx_fee => COIN,
+      :free_tx_bytes => 26_000,
+      :dust => COIN,
+      :per_dust_fee => true,
+      :coinbase_maturity => 30,
+      :coinbase_maturity_new => 240,
+      :reward_base => 500_000 * COIN,
+      :reward_halving => 100_000,
+      :retarget_interval => 240,
+      :retarget_time => 14400, # 4 hours
+      :retarget_time_new => 60, # 1 minute
+      :target_spacing => 60, # block interval
+      :dns_seeds => [
+                     "seed.dogechain.info", 
+                     "seed.dogecoin.com",
+                    ],
+      :genesis_hash => "1a91e3dace36e2be3bf030a65679fe821aa1d6ef92e7c9902eb318182c355691",
+      :proof_of_work_limit => 0x1e0fffff,
       :alert_pubkeys => [],
-      :known_nodes => [],
+      :known_nodes => [
+                       "daemons.chain.so",
+                       "bootstrap.chain.so",
+                      ],
       :checkpoints => {
-        10080 => "00000000003ff9c4b806639ec4376cc9acafcdded0e18e9dbcc2fc42e8e72331",
-        15779 => "000000000003eb31742b35f5efd8ffb5cdd19dcd8e82cdaad90e592c450363b6",
-      }
+                       0 => "1a91e3dace36e2be3bf030a65679fe821aa1d6ef92e7c9902eb318182c355691",
+                       42279 => "8444c3ef39a46222e87584ef956ad2c9ef401578bd8b51e8e4b9a86ec3134d3a",
+                       42400 => "557bb7c17ed9e6d4a6f9361cfddf7c1fc0bdc394af7019167442b41f507252b4",
+                       104679 => "35eb87ae90d44b98898fec8c39577b76cb1eb08e1261cfc10706c8ce9a1d01cf",
+                       128370 => "3f9265c94cab7dc3bd6a2ad2fb26c8845cb41cff437e0a75ae006997b4974be6",
+                       145000 => "cc47cae70d7c5c92828d3214a266331dde59087d4a39071fa76ddfff9b7bde72",
+                       165393 =>"7154efb4009e18c1c6a6a79fc6015f48502bcd0a1edd9c20e44cd7cbbe2eeef1",
+                       186774 => "3c712c49b34a5f34d4b963750d6ba02b73e8a938d2ee415dcda141d89f5cb23a",
+                       199992 => "3408ff829b7104eebaf61fd2ba2203ef2a43af38b95b353e992ef48f00ebb190",
+                       225000 => "be148d9c5eab4a33392a6367198796784479720d06bfdd07bd547fe934eea15a",
+                       250000 => "0e4bcfe8d970979f7e30e2809ab51908d435677998cf759169407824d4f36460",
+                       270639 => "c587a36dd4f60725b9dd01d99694799bef111fc584d659f6756ab06d2a90d911",
+                       299742 => "1cc89c0c8a58046bf0222fe131c099852bd9af25a80e07922918ef5fb39d6742",
+                       323141 => "60c9f919f9b271add6ef5671e9538bad296d79f7fdc6487ba702bf2ba131d31d",
+                       339202 => "8c29048df5ae9df38a67ea9470fdd404d281a3a5c6f33080cd5bf14aa496ab03"
+                     },
+      :auxpow_chain_id => 0x0062,
+      # Doge-specific hard-fork cutoffs
+      :difficulty_change_block => 145000,
+      :maturity_change_block => 145000,
+      :auxpow_start_block => 371337
+    },
+
+    :dogecoin_testnet => {
+      :project => :dogecoin,
+      :magic_head => "\xfc\xc1\xb7\xdc",
+      :address_version => "71",
+      :p2sh_version => "c4",
+      :privkey_version => "f1",
+      :default_port => 44556,
+      :protocol_version => 70003,
+      :min_tx_fee => COIN,
+      :min_relay_tx_fee => COIN,
+      :dust => COIN,
+      :per_dust_fee => true,
+      :free_tx_bytes => 26_000,
+      :coinbase_maturity => 30,
+      :coinbase_maturity_new => 240,
+      :reward_base => 500_000 * COIN,
+      :reward_halving => 100_000,
+      :retarget_interval => 240,
+      :retarget_time => 14400, # 4 hours
+      :retarget_time_new => 60, # 1 minute
+      :target_spacing => 60, # block interval
+      :max_money => 100_000_000_000 * COIN,
+      :dns_seeds => [ 
+                     "testdoge-seed.lionservers.de",
+      ],
+      :genesis_hash => "bb0a78264637406b6360aad926284d544d7049f45189db5664f3c4d07350559e",
+      :proof_of_work_limit => 0x1e0fffff,
+      :alert_pubkeys => [],
+      :known_nodes => [
+		       "localhost",
+                       "testnets.chain.so", 
+      ],
+      :checkpoints => {
+        546 => "ac537cfeda975e45040e9938d08e40a16e0fbd6388d02d9b4928b8ae0108c626",
+      },
+      :auxpow_chain_id => 0x0062,
+      # Doge-specific hard-fork cutoffs
+      :difficulty_change_block => 145000,
+      :maturity_change_block => 145000,
+      :reset_target_block => 157500,
+      :auxpow_start_block => 158100
     },
 
     :namecoin => {
@@ -716,8 +844,10 @@ module Bitcoin
       :min_tx_fee => 50_000,
       :min_relay_tx_fee => 10_000,
       :free_tx_bytes => 1_000,
+      :reward_base => 50 * COIN,
       :dust => CENT,
       :per_dust_fee => true,
+      :reward_halving => 210_000,
       :dns_seeds => [],
       :genesis_hash => "000000000062b72c5e2ceb45fbc8587e807c155b0da735e6483dfba2f0a9c770",
       :proof_of_work_limit => 0x1d00ffff,
@@ -741,8 +871,10 @@ module Bitcoin
       :min_tx_fee => 50_000,
       :min_relay_tx_fee => 10_000,
       :free_tx_bytes => 1_000,
+      :reward_base => 50 * COIN,
       :dust => CENT,
       :per_dust_fee => true,
+      :reward_halving => 210_000,
       :max_money => 21_000_000 * COIN,
       :dns_seeds => [],
       :genesis_hash => "00000001f8ab0d14bceaeb50d163b0bef15aecf62b87bd5f5c864d37f201db97",

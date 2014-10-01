@@ -56,7 +56,7 @@ module Bitcoin
       end
 
       # create block from raw binary +data+
-      def initialize(data)
+      def initialize(data=nil)
         @tx = []
         parse_data_from_io(data) if data
       end
@@ -197,7 +197,7 @@ module Bitcoin
           end
           @aux_pow = AuxPow.from_hash(h['aux_pow'])  if h['aux_pow']
           h['tx'].each{|tx| @tx << Tx.from_hash(tx) }
-          if h['tx'].any? && !Bitcoin.freicoin?
+          if h['tx'].any?
             (raise "Block merkle root mismatch! Block: #{h['hash']}"  unless verify_mrkl_root) if do_raise
           end
         }
@@ -218,6 +218,11 @@ module Bitcoin
         h = to_hash
         %w[tx mrkl_tree].each{|k| h.delete(k) }
         JSON.pretty_generate( h, options )
+      end
+
+      # block header binary output
+      def block_header
+        [@ver, @prev_block, @mrkl_root, @time, @bits, @nonce, Protocol.pack_var_int(0)].pack("Va32a32VVVa*")
       end
 
       # read binary block from a file

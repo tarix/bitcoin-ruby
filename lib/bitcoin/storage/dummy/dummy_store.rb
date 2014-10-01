@@ -68,14 +68,6 @@ module Bitcoin::Storage::Backends
       wrap_block(@blk[blk_id])
     end
 
-    # get block id in the main chain by given +tx_id+
-    def get_block_id_for_tx_id(tx_id)
-      return nil unless tx = get_tx_by_id(tx_id)
-      return nil unless blk = tx.get_block
-      return nil unless blk.chain == MAIN
-      blk.id
-    end
-
     def get_block_by_tx(tx_hash)
       wrap_block(@blk.find {|blk| blk.tx.map(&:hash).include?(tx_hash) })
     end
@@ -112,13 +104,13 @@ module Bitcoin::Storage::Backends
       txouts.map {|o| wrap_txout(o) }
     end
 
-    def get_txouts_for_hash160(hash160, unconfirmed = false)
+    def get_txouts_for_hash160(hash160, type = :hash160, unconfirmed = false)
       @tx.values.map(&:out).flatten.map {|o|
         o = wrap_txout(o)
         if o.parsed_script.is_multisig?
           o.parsed_script.get_multisig_pubkeys.map{|pk| Bitcoin.hash160(pk.unpack("H*")[0])}.include?(hash160) ? o : nil
         else
-          o.hash160 == hash160 ? o : nil
+          o.hash160 == hash160 && o.type == type ? o : nil
         end
       }.compact
     end

@@ -7,8 +7,8 @@ module Bitcoin
 
     # Generate a new keypair.
     #  Bitcoin::Key.generate
-    def self.generate
-      k = new; k.generate; k
+    def self.generate(opts={compressed: true})
+      k = new(nil, nil, opts); k.generate; k
     end
 
     # Import private key from base58 fromat as described in
@@ -24,7 +24,7 @@ module Bitcoin
       key = new(key, nil, compressed)
     end
 
-    def == other
+    def ==(other)
       self.priv == other.priv
     end
 
@@ -32,7 +32,8 @@ module Bitcoin
     #  Bitcoin::Key.new
     #  Bitcoin::Key.new(privkey)
     #  Bitcoin::Key.new(nil, pubkey)
-    def initialize privkey = nil, pubkey = nil, compressed = true
+    def initialize(privkey = nil, pubkey = nil, opts={compressed: true})
+      compressed = opts.is_a?(Hash) ? opts.fetch(:compressed, true) : opts
       @key = Bitcoin.bitcoin_elliptic_curve
       @pubkey_compressed = pubkey ? self.class.is_compressed_pubkey?(pubkey) : compressed
       set_priv(privkey)  if privkey
@@ -104,6 +105,7 @@ module Bitcoin
     #  key2 = Bitcoin::Key.new(nil, key1.pub)
     #  key2.verify("some data", sig)
     def verify(data, sig)
+      regenerate_pubkey unless @key.public_key
       @key.dsa_verify_asn1(data, sig)
     end
 

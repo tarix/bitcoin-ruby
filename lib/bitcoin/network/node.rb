@@ -416,13 +416,6 @@ module Bitcoin::Network
             unless @unconfirmed[obj[1].hash]
               @unconfirmed[obj[1].hash] = obj[1]
               push_notification(:tx, [obj[1], 0])
-
-              if @notifiers[:output]
-                obj[1].out.each.with_index do |out, idx|
-                  address = Bitcoin::Script.new(out.pk_script).get_address
-                  push_notification(:output, { nhash: obj[1].nhash, hash: obj[1].hash, idx: idx, address: address, value: out.value, confirmations: 0 })
-                end
-              end
             end
           end
         rescue Bitcoin::Validation::ValidationError
@@ -496,7 +489,17 @@ module Bitcoin::Network
     # see CommandHandler for details.
     def subscribe channel
       @notifiers[channel.to_sym] ||= EM::Channel.new
-      @notifiers[channel.to_sym].subscribe {|*data| yield(*data) }
+      @notifiers[channel.to_sym].subscribe do |*data|
+        begin
+          yield(*data)
+        rescue
+          p $!; puts *$@
+        end
+      end
+    end
+
+    def unsubscribe channel, id
+      @notifiers[channel.to_sym].unsubscribe(id)
     end
 
     # should the node accept new incoming connections?

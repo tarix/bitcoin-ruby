@@ -124,6 +124,11 @@ describe 'Tx' do
     # coinbase tx with non-default sequence
     tx = Tx.from_json( json=fixtures_file('0961c660358478829505e16a1f028757e54b5bbf9758341a7546573738f31429.json'))
     Tx.new( tx.to_payload ).to_json.should == json
+
+    # toshi format
+    Tx.from_json(fixtures_file('rawtx-02-toshi.json')).to_payload.should == Tx.from_json(fixtures_file('rawtx-02.json')).to_payload
+    Tx.from_json(fixtures_file('rawtx-03-toshi.json')).to_payload.should == Tx.from_json(fixtures_file('rawtx-03.json')).to_payload
+    Tx.from_json(fixtures_file('coinbase-toshi.json')).to_payload.should == Tx.from_json(fixtures_file('coinbase.json')).to_payload
   end
 
   it 'Tx.binary_from_json' do
@@ -222,6 +227,13 @@ describe 'Tx' do
     outpoint_tx.hash.should == "a955032f4d6b0c9bfe8cad8f00a8933790b9c1dc28c82e0f48e75b35da0e4944"
     tx.verify_input_signature(0, outpoint_tx).should == true
 
+    # drop multisig OP_CODESEPARATOR in subscript for signature_hash_for_input when used in ScriptSig
+    tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-eb3b82c0884e3efa6d8b0be55b4915eb20be124c9766245bcc7f34fdac32bccb.json'))
+    tx.hash.should == "eb3b82c0884e3efa6d8b0be55b4915eb20be124c9766245bcc7f34fdac32bccb"
+    outpoint_tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-b8fd633e7713a43d5ac87266adc78444669b987a56b3a65fb92d58c2c4b0e84d.json'))
+    outpoint_tx.hash.should == "b8fd633e7713a43d5ac87266adc78444669b987a56b3a65fb92d58c2c4b0e84d"
+    tx.verify_input_signature(1, outpoint_tx).should == true
+
     # OP_DUP OP_HASH160
     tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-5df1375ffe61ac35ca178ebb0cab9ea26dedbd0e96005dfcee7e379fa513232f.json'))
     tx.hash.should == "5df1375ffe61ac35ca178ebb0cab9ea26dedbd0e96005dfcee7e379fa513232f"
@@ -231,6 +243,15 @@ describe 'Tx' do
     outpoint_tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-ab9805c6d57d7070d9a42c5176e47bb705023e6b67249fb6760880548298e742.json'))
     outpoint_tx.hash.should == "ab9805c6d57d7070d9a42c5176e47bb705023e6b67249fb6760880548298e742"
     tx.verify_input_signature(1, outpoint_tx).should == true
+
+    # testnet3 e335562f7e297aadeed88e5954bc4eeb8dc00b31d829eedb232e39d672b0c009
+    tx = Bitcoin::P::Tx.from_json(fixtures_file('tx-e335562f7e297aadeed88e5954bc4eeb8dc00b31d829eedb232e39d672b0c009.json'))
+    tx.hash.should == "e335562f7e297aadeed88e5954bc4eeb8dc00b31d829eedb232e39d672b0c009"
+    prev_txs = {}
+    tx.in.map{|i| i.previous_output }.uniq.each{|i| prev_txs[i] = Bitcoin::P::Tx.from_json(fixtures_file("tx-#{i}.json")) }
+    tx.in.each.with_index{|i,idx|
+      tx.verify_input_signature(idx, prev_txs[i.previous_output]).should == true
+    }
   end
 
   it '#sign_input_signature' do

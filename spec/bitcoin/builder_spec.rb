@@ -125,6 +125,49 @@ describe "Bitcoin::Builder" do
     tx.in[0].sig_hash.should != nil
   end
 
+  it "should build unsigned multisig transactions and add the signature hash" do
+    tx1 = build_tx do |t|
+      t.input {|i| i.prev_out(@block.tx[0], 0); i.signature_key(@keys[0]) }
+      t.output do |o|
+        o.value 123
+        o.to [2, *@keys[0..2].map(&:pub)], :multisig
+      end
+    end
+
+    tx2 = build_tx do |t|
+      t.input do |i|
+        i.prev_out tx1, 0
+        i.signature_key @keys[0]
+      end
+      t.output {|o| o.value 123; o.to @keys[0].addr }
+    end
+
+    tx2.is_a?(Bitcoin::P::Tx).should == true
+    tx2.in[0].sig_hash.should != nil
+  end
+
+  it "should build unsigned p2sh multisig transactions and add the signature hash" do
+    tx1 = build_tx do |t|
+      t.input {|i| i.prev_out(@block.tx[0], 0); i.signature_key(@keys[0]) }
+      t.output do |o|
+        o.value 123
+        o.to [2, *@keys[0..2].map(&:pub)], :p2sh_multisig
+      end
+    end
+
+    tx2 = build_tx do |t|
+      t.input do |i|
+        i.prev_out tx1, 0
+        i.signature_key @keys[0]
+        i.redeem_script tx1.out[0].redeem_script
+      end
+      t.output {|o| o.value 123; o.to @keys[0].addr }
+    end
+
+    tx2.is_a?(Bitcoin::P::Tx).should == true
+    tx2.in[0].sig_hash.should != nil
+  end
+
   it "should add change output" do
     change_address = Bitcoin::Key.generate.addr
     tx = build_tx(input_value: @block.tx[0].out.map(&:value).inject(:+),
@@ -153,6 +196,30 @@ describe "Bitcoin::Builder" do
       t.input {|i| i.prev_out @block.tx[0]; i.prev_out_index 0; i.signature_key @keys[0] }
       49.times { t.output {|o| o.value 1e8; o.script {|s| s.recipient @keys[1].addr } } }
       t.output {|o| o.value(1e8 - 10000); o.script {|s| s.recipient @keys[1].addr } }
+    end
+    tx.out.size.should == 50
+    tx.out.map(&:value).inject(:+).should == 50e8 - 10000
+  end
+
+  it "randomize_outputs should not modify output values or fees" do
+    change_address = Bitcoin::Key.generate.addr
+    tx = build_tx(input_value: @block.tx[0].out.map(&:value).inject(:+),
+                  change_address: change_address, leave_fee: true) do |t|
+      t.input {|i| i.prev_out @block.tx[0]; i.prev_out_index 0; i.signature_key @keys[0] }
+      t.output {|o| o.value 12345; o.script {|s| s.recipient @keys[1].addr } }
+      t.randomize_outputs
+    end
+
+    tx.out.count.should == 2
+    tx.out.last.value.should == 50e8 - 12345 - Bitcoin.network[:min_tx_fee]
+    Bitcoin::Script.new(tx.out.last.pk_script).get_address.should == change_address
+
+    tx = build_tx(input_value: @block.tx[0].out.map(&:value).inject(:+),
+                  change_address: change_address, leave_fee: true) do |t|
+      t.input {|i| i.prev_out @block.tx[0]; i.prev_out_index 0; i.signature_key @keys[0] }
+      49.times { t.output {|o| o.value 1e8; o.script {|s| s.recipient @keys[1].addr } } }
+      t.output {|o| o.value(1e8 - 10000); o.script {|s| s.recipient @keys[1].addr } }
+      t.randomize_outputs
     end
     tx.out.size.should == 50
     tx.out.map(&:value).inject(:+).should == 50e8 - 10000

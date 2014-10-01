@@ -358,6 +358,15 @@ describe "Bitcoin::Script OPCODES" do
       [[1, 0],  [1,1]],
     ].each{|stack, expected|
       op(:pick, stack).should == expected
+      @script.invalid?.should == false
+    }
+
+    [
+      [[0],  [0]],
+      [[-1],  [-1]],
+    ].each{|stack, expected|
+      op(:pick, stack).should == expected
+      @script.invalid?.should == true
     }
   end
 
@@ -367,7 +376,24 @@ describe "Bitcoin::Script OPCODES" do
       [[1, 0],  [1]],
     ].each{|stack, expected|
       op(:roll, stack).should == expected
+      @script.invalid?.should == false
     }
+
+    [
+      [[0],  [0]],
+      [[-1],  [-1]],
+    ].each{|stack, expected|
+      op(:roll, stack).should == expected
+      @script.invalid?.should == true
+    }
+  end
+
+  it "should do op_2rot" do
+    op(:"2rot", [-1,0,1,2,3,4,5,6]).should == [-1, 0, 3, 4, 5, 6, 1, 2]
+    @script.invalid?.should == false
+
+    op(:"2rot", [2,3,4,5,6]).should == [2, 3, 4, 5, 6]
+    @script.invalid?.should == true
   end
 
   it "should do op_rot" do
@@ -443,6 +469,9 @@ describe "Bitcoin::Script OPCODES" do
       "1 OP_DUP OP_IF OP_ELSE OP_ENDIF",
       "1 OP_IF 1 OP_ELSE OP_ENDIF",
       "0 OP_IF OP_ELSE 1 OP_ENDIF",
+      "beef OP_IF 1 OP_ELSE 0 OP_ENDIF",
+      "0 OP_NOTIF 1 OP_ELSE 0 OP_ENDIF",
+      "beef OP_NOTIF 0 OP_ELSE 1 OP_ENDIF",
     ].each{|script|
       Bitcoin::Script.from_string(script).run.should == true
     }
@@ -698,7 +727,19 @@ describe "Bitcoin::Script OPCODES" do
       "0 OP_0NOTEQUAL 0 OP_EQUAL",
       "2 82 OP_ADD 0 OP_EQUAL",
     ].each{|script|
-      Bitcoin::Script.from_string(script).run.should == true
+      parsed_script = Bitcoin::Script.from_string(script)
+      result = parsed_script.run
+      #p [script, parsed_script, parsed_script.debug result]
+      result.should == true
+    }
+
+    [
+      "ffffff7f ffffff7f OP_ADD ffffff7f OP_ADD OP_TRUE"
+    ].each{|script|
+      parsed_script = Bitcoin::Script.from_string(script)
+      result = parsed_script.run
+      #p [script, parsed_script, parsed_script.debug result]
+      result.should == false
     }
   end
 

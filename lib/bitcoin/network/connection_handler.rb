@@ -41,7 +41,7 @@ module Bitcoin::Network
       @latency_ms = nil
       @lock = Monitor.new
       @last_getblocks = []  # the last few getblocks messages received
-    rescue Exception
+    rescue
       log.fatal { "Error in #initialize" }
       p $!; puts $@; exit
     end
@@ -51,7 +51,7 @@ module Bitcoin::Network
       if incoming?
         begin_handshake
       end
-    rescue Exception
+    rescue
       log.fatal { "Error in #post_init" }
       p $!; puts *$@
     end
@@ -60,7 +60,7 @@ module Bitcoin::Network
     def connection_completed
       @connection_completed = true
       begin_handshake
-    rescue Exception
+    rescue
       log.fatal { "Error in #connection_completed" }
       p $!; puts *$@
     end
@@ -77,7 +77,7 @@ module Bitcoin::Network
     # connection closed; notify listeners and cleanup connection from node
     def unbind
       log.info { (outgoing? && !@connection_completed) ? "Connection failed" : "Disconnected" }
-      @node.push_notification(:connection, [:disconnected, [@host, @port]])
+      @node.push_notification(:connection, {type: :disconnected, host: @host, port: @port})
       @state = :disconnected
       @node.connections.delete(self)
     end
@@ -92,7 +92,7 @@ module Bitcoin::Network
       @node.connections << self
       @state = :handshake
       send_version
-    rescue Exception
+    rescue
       log.fatal { "Error in #begin_handshake" }
       p $!; puts *$@
     end
@@ -103,7 +103,7 @@ module Bitcoin::Network
         log.debug { 'Handshake completed' }
         @state = :connected
         @started = Time.now
-        @node.push_notification(:connection, [:connected, info])
+        @node.push_notification(:connection, info.merge(type: :connected))
         @node.addrs << addr
       end
       send_data P::Addr.pkt(@node.addr)  if @node.config[:announce]
@@ -312,7 +312,7 @@ module Bitcoin::Network
         send_data(Protocol.ping_pkt(@ping_nonce))
       else
         # set latency to 5 seconds, terrible but this version should be obsolete now
-        @latency_ms = (5*1000) 
+        @latency_ms = (5*1000)
         log.debug { "<< ping" }
         send_data(Protocol.ping_pkt)
       end
