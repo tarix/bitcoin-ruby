@@ -265,6 +265,8 @@ describe 'Bitcoin::Script' do
       Script.new(SCRIPT[4]).is_p2sh?.should == false
       Script.new(SCRIPT[5]).is_p2sh?.should == true
       Script.new(SCRIPT[6]).is_p2sh?.should == false
+      Script.from_string("OP_DUP OP_HASH160 b689ebc262f50297139e7d16c4f8909e14ed4322 OP_EQUALVERIFY OP_CHECKSIGVERIFY OP_HASH160 1b6246121883816fc0637e4aa280aca1df219b1a OP_EQUAL")
+        .is_p2sh?.should == false
     end
 
     it '#is_op_return?' do
@@ -371,6 +373,7 @@ describe 'Bitcoin::Script' do
 
       Script.to_pubkey_script_sig(@sig, pub).should == expected_script
     end
+
     it "should reject an improperly encoding public key" do
       # Not binary encoded, like it's supposed to be.
       pub = '02bc3e2b520d4be3e2651f2ba554392ea31edd69d2081186ab98acda3c4bf45e41'
@@ -378,6 +381,21 @@ describe 'Bitcoin::Script' do
       lambda {
         Script.to_pubkey_script_sig(@sig, pub)
       }.should.raise
+    end
+
+    it "should support different hash types" do
+      hash_type = Script::SIGHASH_TYPE[:single]
+      pub = '04bc3e2b520d4be3e2651f2ba554392ea31edd69d2081186ab98acda3c4bf45e41a5f6e093277b774b5893347e38ffafce2b9e82226e6e0b378cf79b8c2eed983c'.htb
+      expected_script = '483045022062437a8f60651cd968137355775fa8bdb83d4ca717fdbc08bf9868a051e0542f022100f5cd626c15ef0de0803ddf299e8895743e7ff484d6335874edfe086ee0a08fec034104bc3e2b520d4be3e2651f2ba554392ea31edd69d2081186ab98acda3c4bf45e41a5f6e093277b774b5893347e38ffafce2b9e82226e6e0b378cf79b8c2eed983c'.htb
+
+      Script.to_pubkey_script_sig(@sig, pub, hash_type).should == expected_script
+    end
+
+    it "should generate multisig script sig" do
+      hash_type = Script::SIGHASH_TYPE[:none]
+      expected_script = '00483045022062437a8f60651cd968137355775fa8bdb83d4ca717fdbc08bf9868a051e0542f022100f5cd626c15ef0de0803ddf299e8895743e7ff484d6335874edfe086ee0a08fec02483045022062437a8f60651cd968137355775fa8bdb83d4ca717fdbc08bf9868a051e0542f022100f5cd626c15ef0de0803ddf299e8895743e7ff484d6335874edfe086ee0a08fec02'.htb
+
+      Script.to_multisig_script_sig(@sig, @sig, hash_type).should == expected_script
     end
   end
 
@@ -635,4 +653,70 @@ OP_ENDIF")
     script.run.should == true
   end
 
+  def build_p2sh_multisig_tx(m, *keys)
+    redeem_script = Bitcoin::Script.to_multisig_script(m, *keys.map(&:pub))
+    p2sh_address = Bitcoin.hash160_to_p2sh_address(Bitcoin.hash160(redeem_script.hth))
+
+    prev_tx = build_tx {|t| t.input {|i| i.coinbase}
+      t.output {|o| o.to p2sh_address; o.value 50e8 } }
+    tx = build_tx {|t| t.input {|i| i.prev_out prev_tx, 0 }
+      t.output {|o| o.to Bitcoin::Key.generate.addr; o.value 50e8 } }
+
+    sig_hash = tx.signature_hash_for_input(0, redeem_script)
+    return prev_tx, tx, redeem_script, sig_hash
+  end
+
+  it "#sort_p2sh_multisig_signatures 3-of-3" do
+    keys = 3.times.map { Bitcoin::Key.generate }
+
+    prev_tx, tx, redeem_script, sig_hash = build_p2sh_multisig_tx(3, *keys)
+    sigs = keys.map {|k| k.sign(sig_hash) }
+
+    # add sigs in all possible orders, sort them, and see if they are valid
+    [0, 1, 2].permutation do |order|
+      script_sig = Script.to_p2sh_multisig_script_sig(redeem_script)
+      order.each{|i| script_sig = Script.add_sig_to_multisig_script_sig(sigs[i], script_sig)}
+      script_sig = Script.sort_p2sh_multisig_signatures(script_sig, sig_hash)
+      tx.in[0].script_sig = script_sig
+      tx.verify_input_signature(0, prev_tx).should == true
+    end
+  end
+
+  it "#sort_p2sh_multisig_signatures 2-of-3" do
+    keys = 3.times.map { Bitcoin::Key.generate }
+
+    prev_tx, tx, redeem_script, sig_hash = build_p2sh_multisig_tx(2, *keys)
+    sigs = keys.map {|k| k.sign(sig_hash) }
+
+    # add sigs in all possible orders, sort them, and see if they are valid
+    [0, 1, 2].permutation(2) do |order|
+      script_sig = Script.to_p2sh_multisig_script_sig(redeem_script)
+      order.each{|i| script_sig = Script.add_sig_to_multisig_script_sig(sigs[i], script_sig)}
+      script_sig = Script.sort_p2sh_multisig_signatures(script_sig, sig_hash)
+      tx.in[0].script_sig = script_sig
+      tx.verify_input_signature(0, prev_tx).should == true
+    end
+  end
+
+end
+
+describe "Implements BIP62" do
+  it 'tests for incorrectly encoded S-values in signatures' do
+    # TX 3da75972766f0ad13319b0b461fd16823a731e44f6e9de4eb3c52d6a6fb6c8ae
+    sig_orig = ["304502210088984573e3e4f33db7df6aea313f1ce67a3ef3532ea89991494c7f018258371802206ceefc9291450dbd40d834f249658e0f64662d52a41cf14e20c9781144f2fe0701"].pack("H*")
+    Bitcoin::Script::is_low_der_signature?(sig_orig).should == true
+    
+    # Set the start of the S-value to 0xff so it's well above the order of the curve divided by two
+    sig = sig_orig.unpack("C*")
+    length_r = sig[3]
+    sig[6 + length_r] = 0xff
+
+    Bitcoin::Script::is_low_der_signature?(sig.pack("C*")).should == false
+  end
+  it 'enforces rules 3 and 4' do
+      Script.new([75].pack("C") + 'A' * 75).pushes_are_canonical?.should == true
+      Script.new([Bitcoin::Script::OP_PUSHDATA1, 75].pack("CC") + 'A' * 75).pushes_are_canonical?.should == false
+      Script.new([Bitcoin::Script::OP_PUSHDATA2, 255].pack("Cv") + 'A' * 255).pushes_are_canonical?.should == false
+      Script.new([Bitcoin::Script::OP_PUSHDATA4, 1645].pack("CV") + 'A' * 1645).pushes_are_canonical?.should == false
+    end
 end

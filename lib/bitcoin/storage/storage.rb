@@ -17,9 +17,15 @@ module Bitcoin::Storage
   BACKENDS.each do |name|
     module_eval <<-EOS
       def self.#{name} config, *args
-        Backends.const_get("#{name.capitalize}Store").new(config, *args)
+        STDERR.puts "Warning: 'Bitcoin::Storage.#{name}' is deprecated. " \
+          "Please use 'Bitcoin::Storage.create_store' instead."
+        create_store("#{name}", config)
       end
     EOS
+  end
+
+  def self.create_store(backend, config)
+    Backends.const_get("#{backend.capitalize}Store").new(config)
   end
 
   module Backends
@@ -57,7 +63,7 @@ module Bitcoin::Storage
 
       attr_accessor :config
 
-      def initialize(config = {}, getblocks_callback = nil)
+      def initialize(config = {})
         # merge all the configuration defaults, keeping the most specific ones.
         store_ancestors = self.class.ancestors.select {|a| a.name =~ /StoreBase$/ }.reverse
         base = store_ancestors.reduce(store_ancestors[0]::DEFAULT_CONFIG) do |config, ancestor|
@@ -67,7 +73,6 @@ module Bitcoin::Storage
         @log    = config[:log] || Bitcoin::Storage.log
         @log.level = @config[:log_level]  if @config[:log_level]
         init_store_connection
-        @getblocks_callback = getblocks_callback
         @checkpoints = Bitcoin.network[:checkpoints] || {}
         @watched_addrs = []
         @notifiers = {}

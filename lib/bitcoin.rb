@@ -20,8 +20,11 @@ module Bitcoin
   autoload :Builder,    'bitcoin/builder'
   autoload :Validation, 'bitcoin/validation'
 
+  autoload :Dogecoin,   'bitcoin/dogecoin'
   autoload :Namecoin,   'bitcoin/namecoin'
   autoload :Litecoin,   'bitcoin/litecoin'
+
+  autoload :ContractHash,   'bitcoin/contracthash'
 
   module Network
     autoload :ConnectionHandler,  'bitcoin/network/connection_handler'
@@ -37,11 +40,6 @@ module Bitcoin
     autoload :SimpleCoinSelector,    'bitcoin/wallet/coinselector'
     autoload :Wallet,                'bitcoin/wallet/wallet'
     autoload :TxDP,                'bitcoin/wallet/txdp'
-  end
-
-  module Gui
-    autoload :Gui,        'bitcoin/gui/gui'
-    autoload :Connection, 'bitcoin/gui/connection'
   end
 
   def self.require_dependency name, opts = {}
@@ -91,6 +89,14 @@ module Bitcoin
       return false unless hex && hex.bytesize == 50
       return false unless [address_version, p2sh_version].include?(hex[0...2])
       address_checksum?(address)
+    end
+
+    # check if given +pubkey+ is valid.
+    def valid_pubkey?(pubkey)
+      ::OpenSSL::PKey::EC::Point.from_hex(bitcoin_elliptic_curve.group, pubkey)
+      true
+    rescue OpenSSL::PKey::EC::Point::Error
+      false
     end
 
     # get hash160 for given +address+. returns nil if address is invalid.
@@ -170,11 +176,25 @@ module Bitcoin
 
     # target compact bits (int) to bignum hex
     def decode_compact_bits(bits)
-      bytes = Array.new(size=((bits >> 24) & 255), 0)
-      bytes[0] = (bits >> 16) & 255 if size >= 1
-      bytes[1] = (bits >>  8) & 255 if size >= 2
-      bytes[2] = (bits      ) & 255 if size >= 3
-      bytes.pack("C*").unpack("H*")[0].rjust(64, '0')
+      if Bitcoin.network_project == :dogecoin
+        bytes = Array.new(size=((bits >> 24) & 255), 0)
+        bytes[0] = (bits >> 16) & 0x7f if size >= 1
+        bytes[1] = (bits >>  8) & 255 if size >= 2
+        bytes[2] = (bits      ) & 255 if size >= 3
+        target = bytes.pack("C*").unpack("H*")[0].rjust(64, '0')
+        # Bit number 24 represents the sign
+        if (bits & 0x00800000) != 0
+          "-" + target
+        else
+          target
+        end
+      else
+        bytes = Array.new(size=((bits >> 24) & 255), 0)
+        bytes[0] = (bits >> 16) & 255 if size >= 1
+        bytes[1] = (bits >>  8) & 255 if size >= 2
+        bytes[2] = (bits      ) & 255 if size >= 3
+        bytes.pack("C*").unpack("H*")[0].rjust(64, '0')
+      end
     end
 
     # target bignum hex to compact bits (int)
@@ -286,13 +306,23 @@ module Bitcoin
     end
 
     def sign_data(key, data)
-      key.dsa_sign_asn1(data)
+      sig = key.dsa_sign_asn1(data)
+      if Script.is_low_der_signature?(sig)
+        sig
+      else
+        Bitcoin::OpenSSL_EC.signature_to_low_s(sig)
+      end
     end
 
     def verify_signature(hash, signature, public_key)
       key  = bitcoin_elliptic_curve
       key.public_key = ::OpenSSL::PKey::EC::Point.from_hex(key.group, public_key)
-      key.dsa_verify_asn1(hash, signature)
+      signature = Bitcoin::OpenSSL_EC.repack_der_signature(signature)
+      if signature
+        key.dsa_verify_asn1(hash, signature)
+      else
+        false
+      end
     rescue OpenSSL::PKey::ECError, OpenSSL::PKey::EC::Point::Error
       false
     end
@@ -348,6 +378,38 @@ module Bitcoin
       "%.7f" % Math.exp(max_body - Math.log(bits&0x00ffffff) + scaland * (0x1d - ((bits&0xff000000)>>24)))
     end
 
+    # Calculate new difficulty target. Note this takes in details of the preceeding
+    # block, not the current one.
+    #
+    # prev_height is the height of the block before the retarget occurs
+    # prev_block_time "time" field from the block before the retarget occurs
+    # prev_block_bits "bits" field from the block before the retarget occurs (target as a compact value)
+    # last_retarget_time is the "time" field from the block when a retarget last occurred
+    def block_new_target(prev_height, prev_block_time, prev_block_bits, last_retarget_time)
+      # target interval - what is the ideal interval between the blocks
+      retarget_time = Bitcoin.network[:retarget_time]
+
+      actual_time = prev_block_time - last_retarget_time
+
+      min = retarget_time / 4
+      max = retarget_time * 4
+
+      actual_time = min if actual_time < min
+      actual_time = max if actual_time > max
+
+      # It could be a bit confusing: we are adjusting difficulty of the previous block, while logically
+      # we should use difficulty of the previous retarget block
+
+      prev_target = decode_compact_bits(prev_block_bits).to_i(16)
+
+      new_target = prev_target * actual_time / retarget_time
+      if new_target < Bitcoin.decode_compact_bits(Bitcoin.network[:proof_of_work_limit]).to_i(16)
+        encode_compact_bits(new_target.to_s(16))
+      else
+        Bitcoin.network[:proof_of_work_limit]
+      end
+    end
+
     # average number of hashes required to win a block with the current target. (nbits)
     def block_hashes_to_win(target_nbits)
       current_target  = decode_compact_bits(target_nbits).to_i(16)
@@ -386,16 +448,7 @@ module Bitcoin
     end
 
     def block_creation_reward(block_height)
-      if (Bitcoin.network_project == :dogecoin) && block_height < Bitcoin.network[:difficulty_change_block]
-        # Dogecoin early rewards were random, using part of the hash of the
-        # previous block as the seed for the Mersenne Twister algorithm.
-        # Given we don't have previous block hash available, and this value is
-        # functionally a maximum (not exact value), I'm using the maximum the random
-        # reward generator can produce and calling it good enough.
-        Bitcoin.network[:reward_base] / (2 ** (block_height / Bitcoin.network[:reward_halving].to_f).floor) * 2
-      else
-        Bitcoin.network[:reward_base] / (2 ** (block_height / Bitcoin.network[:reward_halving].to_f).floor)
-      end
+      Bitcoin.network[:reward_base] / (2 ** (block_height / Bitcoin.network[:reward_halving].to_f).floor)
     end
   end
 
@@ -435,6 +488,7 @@ module Bitcoin
       end
       def to_hex; to_bn.to_hex; end
       def self.bn2mpi(hex) BN.from_hex(hex).to_mpi; end
+      def ec_add(point); self.class.new(group, OpenSSL::BN.from_hex(OpenSSL_EC.ec_add(self, point))); end
     end
   end
 
@@ -460,11 +514,12 @@ module Bitcoin
     @network_options = nil # clear cached parameters
     @network = name.to_sym
     @network_project = network[:project] rescue nil
+    Dogecoin.load  if dogecoin? || dogecoin_testnet?
     Namecoin.load  if namecoin?
     @network
   end
 
-  [:bitcoin, :namecoin, :litecoin, :dogecoin].each do |n|
+  [:bitcoin, :namecoin, :litecoin, :dogecoin, :dogecoin_testnet].each do |n|
     instance_eval "def #{n}?; network_project == :#{n}; end"
   end
 

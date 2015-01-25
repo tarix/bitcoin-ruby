@@ -28,6 +28,78 @@ describe 'Bitcoin::Dogecoin' do
     Bitcoin.valid_address?("DRjyUS2uuieEPkhZNdQz8hE5YycxVEqSXA").should == false
   end
 
+  it 'should calculate retarget difficulty' do
+    Bitcoin::network = :dogecoin
+
+    prev_height = 239
+    prev_block_time = 1386475638 # Block 239
+    prev_block_bits = 0x1e0ffff0
+    last_retarget_time = 1386474927 # Block 1
+    new_difficulty = Bitcoin.block_new_target(prev_height, prev_block_time, prev_block_bits, last_retarget_time)
+    new_difficulty.to_s(16).should == 0x1e00ffff.to_s(16)
+
+    prev_height = 479
+    prev_block_time = 1386475840
+    prev_block_bits = 0x1e0fffff
+    last_retarget_time = 1386475638 # Block 239
+    new_difficulty = Bitcoin.block_new_target(prev_height, prev_block_time, prev_block_bits, last_retarget_time)
+    new_difficulty.to_s(16).should == 0x1e00ffff.to_s(16)
+
+    prev_height = 9_599
+    prev_block_time = 1386954113
+    prev_block_bits = 0x1c1a1206
+    last_retarget_time = 1386942008 # Block 9359
+    new_difficulty = Bitcoin.block_new_target(prev_height, prev_block_time, prev_block_bits, last_retarget_time)
+    new_difficulty.to_s(16).should == 0x1c15ea59.to_s(16)
+
+    # First hard-fork at 145,000, which applies to block 145,001 onwards
+    prev_height = 145_000
+    prev_block_time = 1395094679
+    prev_block_bits = 0x1b499dfd
+    last_retarget_time = 1395094427
+    new_difficulty = Bitcoin.block_new_target(prev_height, prev_block_time, prev_block_bits, last_retarget_time)
+    new_difficulty.to_s(16).should == 0x1b671062.to_s(16)
+
+    # Test case for correct rounding of modulated time - by default C++ and Ruby do not
+    # necessarily round identically
+    prev_height = 145_001
+    prev_block_time = 1395094727
+    prev_block_bits = 0x1b671062
+    last_retarget_time = 1395094679
+    new_difficulty = Bitcoin.block_new_target(prev_height, prev_block_time, prev_block_bits, last_retarget_time)
+    new_difficulty.to_s(16).should == 0x1b6558a4.to_s(16)
+
+    # Test the second hard-fork at 371,337 as well
+    prev_height = 371336
+    prev_block_time = 1410464569
+    prev_block_bits = 0x1b2fdf75
+    last_retarget_time = 1410464445
+    new_difficulty = Bitcoin.block_new_target(prev_height, prev_block_time, prev_block_bits, last_retarget_time)
+    new_difficulty.to_s(16).should == 0x1b364184.to_s(16)
+
+    prev_height = 408_596
+    prev_block_time = 1412800112
+    prev_block_bits = 0x1b033d8b
+    last_retarget_time = 1412799989 # Block 408,595
+    new_difficulty = Bitcoin.block_new_target(prev_height, prev_block_time, prev_block_bits, last_retarget_time)
+    new_difficulty.to_s(16).should == 0x1b039e52.to_s(16)
+  end
+
+  it 'should calculate reward upper bounds' do
+    Bitcoin::network = :dogecoin
+
+    Bitcoin.block_creation_reward(99000).should == 1000000 * COIN # Note this is the maximum possible, not actual reward
+    Bitcoin.block_creation_reward(144999).should == 500000 * COIN
+    Bitcoin.block_creation_reward(145000).should == 250000 * COIN # Hard-forked to remove random rewards
+    Bitcoin.block_creation_reward(199999).should == 250000 * COIN
+    Bitcoin.block_creation_reward(299999).should == 125000 * COIN
+    Bitcoin.block_creation_reward(399999).should == 62500 * COIN
+    Bitcoin.block_creation_reward(499999).should == 31250 * COIN
+    Bitcoin.block_creation_reward(599999).should == 15625 * COIN
+    Bitcoin.block_creation_reward(600000).should == 10000 * COIN
+    Bitcoin.block_creation_reward(700000).should == 10000 * COIN
+  end
+
   it 'should calculate merkle root from AuxPoW transaction branch' do
     # Taken directly from Dogecoin block #403,931
 

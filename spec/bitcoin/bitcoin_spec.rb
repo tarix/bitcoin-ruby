@@ -163,6 +163,14 @@ describe 'Bitcoin Address/Hash160/PubKey' do
     success.should == true
   end
 
+  it 'validate bitcoin public key' do
+    key = Bitcoin::Key.generate
+    Bitcoin.valid_pubkey?(key.pub_compressed).should == true
+    Bitcoin.valid_pubkey?(key.pub_uncompressed).should == true
+    Bitcoin.valid_pubkey?(key.addr).should == false
+    Bitcoin.valid_pubkey?(key.priv).should == false
+  end
+
   it 'validate p2sh address' do
     Bitcoin.network = :testnet
     Bitcoin.valid_address?("2MyLngQnhzjzatKsB7XfHYoP9e2XUXSiBMM").should == true
@@ -346,6 +354,9 @@ describe 'Bitcoin Address/Hash160/PubKey' do
     Bitcoin.decode_compact_bits(target).should ==
       "0000000065465700000000000000000000000000000000000000000000000000"
     Bitcoin.encode_compact_bits( Bitcoin.decode_compact_bits( target ) ).should == target
+
+    #Bitcoin.network = :dogecoin
+    #Bitcoin.decode_compact_bits( "01fedcba".to_i(16) ).to_i(16).should == -0x7e
   end
 
   it '#block_hash' do
@@ -493,6 +504,16 @@ describe 'Bitcoin Address/Hash160/PubKey' do
 
   it '#block_difficulty' do
     Bitcoin.block_difficulty(436835377).should == "1751454.5353407"
+  end
+
+  it 'should calculate retarget difficulty' do
+    prev_height = 201599
+    prev_block_time = 1349227021
+    prev_block_bits = 0x1a05db8b
+    last_retarget_time = 1348092851
+    new_difficulty = Bitcoin.block_new_target(prev_height, prev_block_time, prev_block_bits, last_retarget_time)
+    
+    Bitcoin.decode_compact_bits(new_difficulty.should) == Bitcoin.decode_compact_bits(0x1a057e08)
   end
 
   it '#block_hashes_to_win' do

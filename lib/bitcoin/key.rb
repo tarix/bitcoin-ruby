@@ -98,7 +98,12 @@ module Bitcoin
     #  key1 = Bitcoin::Key.generate
     #  sig = key1.sign("some data")
     def sign(data)
-      @key.dsa_sign_asn1(data)
+      sig = @key.dsa_sign_asn1(data)
+      if Script::is_low_der_signature?(sig)
+        sig
+      else
+        Bitcoin::OpenSSL_EC.signature_to_low_s(sig)
+      end
     end
 
     # Verify signature +sig+ for +data+.
@@ -106,7 +111,12 @@ module Bitcoin
     #  key2.verify("some data", sig)
     def verify(data, sig)
       regenerate_pubkey unless @key.public_key
-      @key.dsa_verify_asn1(data, sig)
+      sig = Bitcoin::OpenSSL_EC.repack_der_signature(sig)
+      if sig
+        @key.dsa_verify_asn1(data, sig)
+      else
+        false
+      end
     end
 
 

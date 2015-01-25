@@ -27,7 +27,7 @@ module OpenSSL_EC
   attach_function :BN_CTX_new, [], :pointer
   attach_function :BN_add, [:pointer, :pointer, :pointer], :int
   attach_function :BN_bin2bn, [:pointer, :int, :pointer], :pointer
-  attach_function :BN_bn2bin, [:pointer, :pointer], :void
+  attach_function :BN_bn2bin, [:pointer, :pointer], :int
   attach_function :BN_cmp, [:pointer, :pointer], :int
   attach_function :BN_copy, [:pointer, :pointer], :pointer
   attach_function :BN_dup, [:pointer], :pointer
@@ -38,7 +38,9 @@ module OpenSSL_EC
   attach_function :BN_mul_word, [:pointer, :int], :int
   attach_function :BN_new, [], :pointer
   attach_function :BN_rshift, [:pointer, :pointer, :int], :int
+  attach_function :BN_rshift1, [:pointer, :pointer], :int
   attach_function :BN_set_word, [:pointer, :int], :int
+  attach_function :BN_sub, [:pointer, :pointer, :pointer], :int
   attach_function :EC_GROUP_get_curve_GFp, [:pointer, :pointer, :pointer, :pointer, :pointer], :int
   attach_function :EC_GROUP_get_degree, [:pointer], :int
   attach_function :EC_GROUP_get_order, [:pointer, :pointer, :pointer], :int
@@ -61,6 +63,13 @@ module OpenSSL_EC
   attach_function :ECDSA_do_sign, [:pointer, :uint, :pointer], :pointer
   attach_function :BN_num_bits, [:pointer], :int
   attach_function :ECDSA_SIG_free, [:pointer], :void
+  attach_function :EC_POINT_add, [:pointer, :pointer, :pointer, :pointer, :pointer], :int
+  attach_function :EC_POINT_point2hex, [:pointer, :pointer, :int, :pointer], :string
+  attach_function :EC_POINT_hex2point, [:pointer, :string, :pointer, :pointer], :pointer
+  attach_function :ECDSA_SIG_new, [], :pointer
+  attach_function :d2i_ECDSA_SIG, [:pointer, :pointer, :long], :pointer
+  attach_function :i2d_ECDSA_SIG, [:pointer, :pointer], :int
+  attach_function :OPENSSL_free, :CRYPTO_free, [:pointer], :void
 
   def self.BN_num_bytes(ptr); (BN_num_bits(ptr) + 7) / 8; end
 
@@ -223,6 +232,50 @@ module OpenSSL_EC
     pub_hex
   end
 
+  # Regenerate a DER-encoded signature such that the S-value complies with the BIP62
+  # specification.
+  #
+  def self.signature_to_low_s(signature)
+    init_ffi_ssl
+
+    buf = FFI::MemoryPointer.new(:uint8, 34)
+    temp = signature.unpack("C*")
+    length_r = temp[3]
+    length_s = temp[5+length_r]
+    sig = FFI::MemoryPointer.from_string(signature)
+
+    # Calculate the lower s value
+    s = BN_bin2bn(sig[6 + length_r], length_s, BN_new())
+    eckey = EC_KEY_new_by_curve_name(NID_secp256k1)
+    group, order, halforder, ctx = EC_KEY_get0_group(eckey), BN_new(), BN_new(), BN_CTX_new()
+
+    EC_GROUP_get_order(group, order, ctx)
+    BN_rshift1(halforder, order)
+    if BN_cmp(order, halforder) > 0
+      BN_sub(s, order, s)
+    end
+
+    BN_free(halforder)
+    BN_free(order)
+    BN_CTX_free(ctx)
+
+    length_s = BN_bn2bin(s, buf)
+    # p buf.read_string(length_s).unpack("H*")
+
+    # Re-encode the signature in DER format
+    sig = [0x30, 0, 0x02, length_r]
+    sig.concat(temp.slice(4, length_r))
+    sig << 0x02
+    sig << length_s
+    sig.concat(buf.read_string(length_s).unpack("C*"))
+    sig[1] = sig.size - 2
+
+    BN_free(s)
+    EC_KEY_free(eckey)
+
+    sig.pack("C*")
+  end
+
   def self.sign_compact(hash, private_key, public_key_hex = nil, pubkey_compressed = nil)
     private_key = [private_key].pack("H*") if private_key.bytesize >= 64
     private_key_hex = private_key.unpack("H*")[0]
@@ -277,6 +330,49 @@ module OpenSSL_EC
 
     compressed = (version >= 31) ? (version -= 4; true) : false
     pubkey = recover_public_key_from_signature(hash, signature, version-27, compressed)
+  end
+
+  # lifted from https://github.com/GemHQ/money-tree
+  def self.ec_add(point_0, point_1)
+    init_ffi_ssl
+
+    eckey = EC_KEY_new_by_curve_name(NID_secp256k1)
+    group = EC_KEY_get0_group(eckey)
+
+    point_0_hex = point_0.to_bn.to_s(16)
+    point_0_pt = EC_POINT_hex2point(group, point_0_hex, nil, nil)
+    point_1_hex = point_1.to_bn.to_s(16)
+    point_1_pt = EC_POINT_hex2point(group, point_1_hex, nil, nil)
+
+    sum_point = EC_POINT_new(group)
+    success = EC_POINT_add(group, sum_point, point_0_pt, point_1_pt, nil)
+    hex = EC_POINT_point2hex(group, sum_point, POINT_CONVERSION_UNCOMPRESSED, nil)
+    EC_KEY_free(eckey)
+    EC_POINT_free(sum_point)
+    hex
+  end
+
+  # repack signature for OpenSSL 1.0.1k handling of DER signatures
+  # https://github.com/bitcoin/bitcoin/pull/5634/files
+  def self.repack_der_signature(signature)
+    init_ffi_ssl
+
+    return false if signature.empty?
+
+    # New versions of OpenSSL will reject non-canonical DER signatures. de/re-serialize first.
+    norm_der = FFI::MemoryPointer.new(:pointer)
+    sig_ptr  = FFI::MemoryPointer.new(:pointer).put_pointer(0, FFI::MemoryPointer.from_string(signature))
+
+    norm_sig = d2i_ECDSA_SIG(nil, sig_ptr, signature.bytesize)
+
+    derlen = i2d_ECDSA_SIG(norm_sig, norm_der)
+    ECDSA_SIG_free(norm_sig)
+    return false if derlen <= 0
+
+    ret = norm_der.read_pointer.read_string(derlen)
+    OPENSSL_free(norm_der.read_pointer)
+
+    ret
   end
 
   def self.init_ffi_ssl
