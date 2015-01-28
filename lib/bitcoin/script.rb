@@ -485,6 +485,14 @@ class Bitcoin::Script
     script_pubkey = binary_from_string(script)
   end
 
+  def get_sig_address
+    # check for a standard pubkey scriptsig
+    return nil if @chunks.size != 2
+    return nil if @chunks[1].size != 33
+    # the pubkey the second value
+    Bitcoin.pubkey_to_address( @chunks[1].bth )
+  end
+
   # pay_to_script_hash: https://en.bitcoin.it/wiki/BIP_0016
   #
   # <sig> {<pub> OP_CHECKSIG} | OP_HASH160 <script_hash> OP_EQUAL
