@@ -7,11 +7,6 @@ end
 PROJECT_SPECS = ( FileList['spec/bitcoin/bitcoin_spec.rb'] +
                   FileList['spec/bitcoin/protocol/*_spec.rb'] +
                   FileList['spec/bitcoin/script/*_spec.rb'] +
-                  FileList['spec/bitcoin/wallet/*_spec.rb'] +
-                  ['spec/bitcoin/storage/storage_spec.rb',
-                   'spec/bitcoin/storage/reorg_spec.rb',
-                   'spec/bitcoin/storage/validation_spec.rb'] +
-                  FileList['spec/bitcoin/node/*_spec.rb'] +
                   FileList['spec/bitcoin/*_spec.rb'] ).uniq
 
 RUBY = 'ruby' unless defined?(RUBY)
@@ -28,6 +23,7 @@ task :bacon do
 
   specs = PROJECT_SPECS
   #specs.delete_if{|i| File.basename(i) == 'storage_spec.rb' } # skip for now
+  specs.delete_if{|i| File.basename(i) == 'secp256k1_spec.rb' } # skip for now
 
   # E.g. SPEC=specs/bitcoin/script/ to run script-related specs only.
   if spec_mask = ENV["SPEC"]
