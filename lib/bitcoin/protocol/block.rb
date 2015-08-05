@@ -173,7 +173,9 @@ module Bitcoin
           [buf.bytesize, buf].pack("Ca*")
         else
           coinbase = @tx.first.inputs.first.script_sig
-          coinbase[1..coinbase[0].ord].ljust(4, "\x00").unpack("V").first
+          height_len = coinbase[0].ord
+          return nil unless height_len == 0x03 # not all ver2 blocks have a valid height before the switchover
+          coinbase[1..height_len].ljust(4, "\x00").unpack("V").first
         end
       rescue
         nil
