@@ -67,13 +67,25 @@ module Bitcoin
 
         @ver = buf.read(4).unpack("V")[0]
 
+        return false if buf.eof?
+
         in_size = Protocol.unpack_var_int_from_io(buf)
         @in = []
-        in_size.times{ @in << TxIn.from_io(buf) }
+        in_size.times{
+          break if buf.eof?
+          @in << TxIn.from_io(buf)
+        }
+
+        return false if buf.eof?
 
         out_size = Protocol.unpack_var_int_from_io(buf)
         @out = []
-        out_size.times{ @out << TxOut.from_io(buf) }
+        out_size.times{
+          break if buf.eof?
+          @out << TxOut.from_io(buf)
+        }
+
+        return false if buf.eof?
 
         @lock_time = buf.read(4).unpack("V")[0]
 
@@ -225,6 +237,7 @@ module Bitcoin
           'in'  =>  @in.map{|i| i.to_hash(options) },
           'out' => @out.map{|o| o.to_hash(options) }
         }
+        h['nid'] = normalized_hash  if options[:with_nid]
         h
       end
 

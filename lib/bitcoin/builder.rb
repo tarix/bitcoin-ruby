@@ -14,7 +14,6 @@ module Bitcoin
       yield c
       c.block(target)
     end
-    alias :blk :build_block
 
     # build a Bitcoin::Protocol::Tx.
     # see TxBuilder for details.
@@ -23,7 +22,6 @@ module Bitcoin
       yield c
       c.tx opts
     end
-    alias :tx :build_tx
 
     # build a Bitcoin::Script.
     # see ScriptBuilder for details.
@@ -95,7 +93,7 @@ module Bitcoin
         @block.bits = Bitcoin.encode_compact_bits(target)
         t = Time.now
         @block.recalc_block_hash
-        until @block.hash < target
+        until @block.hash.to_i(16) < target.to_i(16)
           @block.nonce += 1
           @block.recalc_block_hash
           if @block.nonce == 100000
@@ -173,18 +171,20 @@ module Bitcoin
       # case to specify a tx fee that should be left unclaimed by the
       # change output.
       def tx opts = {}
+        return @tx  if @tx.hash
+
         if opts[:change_address] && !opts[:input_value]
           raise "Must give 'input_value' when auto-generating change output!"
         end
         @ins.each {|i| @tx.add_in(i.txin) }
         @outs.each {|o| @tx.add_out(o.txout) }
-
         if opts[:change_address]
-          output_value = @tx.out.map(&:value).inject(:+)
+          output_value = @tx.out.map(&:value).inject(:+) || 0
           change_value = opts[:input_value] - output_value
           if opts[:leave_fee]
-            if change_value >= @tx.minimum_block_fee
-              change_value -= @tx.minimum_block_fee
+            fee = @tx.minimum_block_fee + (opts[:extra_fee] || 0)
+            if change_value >= fee
+              change_value -= fee
             else
               change_value = 0
             end
@@ -219,7 +219,7 @@ module Bitcoin
       def sig_hash_and_all_keys_exist?(inc, sig_script)
         return false unless @sig_hash && inc.has_keys?
         script = Bitcoin::Script.new(sig_script)
-        return true if script.is_hash160? || script.is_pubkey?
+        return true if script.is_hash160? || script.is_pubkey? || (Bitcoin.namecoin? && script.is_namecoin?)
         if script.is_multisig?
           return inc.has_multiple_keys? && inc.key.size >= script.get_signatures_required
         end

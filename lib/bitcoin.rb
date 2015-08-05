@@ -276,12 +276,23 @@ module Bitcoin
     end
 
     def sign_data(key, data)
-      sig = key.dsa_sign_asn1(data)
-      if Script.is_low_der_signature?(sig)
-        sig
-      else
-        Bitcoin::OpenSSL_EC.signature_to_low_s(sig)
-      end
+      sig = nil
+      loop {
+        sig = key.dsa_sign_asn1(data)
+        sig = if Script.is_low_der_signature?(sig)
+                sig
+              else
+                Bitcoin::OpenSSL_EC.signature_to_low_s(sig)
+              end
+
+        buf = sig + [Script::SIGHASH_TYPE[:all]].pack("C") # is_der_signature expects sig + sighash_type format
+        if Script.is_der_signature?(buf)
+          break
+        else
+          p ["Bitcoin#sign_data: invalid der signature generated, trying again.", data.unpack("H*")[0], sig.unpack("H*")[0]]
+        end
+      }
+      return sig
     end
 
     def verify_signature(hash, signature, public_key)
@@ -322,17 +333,14 @@ module Bitcoin
     end
 
     def verify_message(address, signature, message)
-      hash = bitcoin_signed_message_hash(message)
       signature = signature.unpack("m0")[0] rescue nil # decode base64
-      raise "invalid address"           unless valid_address?(address)
-      raise "malformed base64 encoding" unless signature
-      raise "malformed signature"       unless signature.bytesize == 65
+      return false unless valid_address?(address)
+      return false unless signature
+      return false unless signature.bytesize == 65
+      hash = bitcoin_signed_message_hash(message)
       pubkey = OpenSSL_EC.recover_compact(hash, signature)
       pubkey_to_address(pubkey) == address if pubkey
-    rescue => ex
-      p [ex.message, ex.backtrace]; false
     end
-
 
     # block count when the next retarget will take place.
     def block_next_retarget(block_height)
@@ -539,6 +547,8 @@ module Bitcoin
       address_version: "00",
       p2sh_version: "05",
       privkey_version: "80",
+      extended_privkey_version: "0488ade4",
+      extended_pubkey_version: "0488b21e",
       default_port: 8333,
       protocol_version: 70001,
       coinbase_maturity: 100,
@@ -553,11 +563,13 @@ module Bitcoin
       free_tx_bytes: 1_000,
       dust: CENT,
       per_dust_fee: false,
+      bip34_height: 227931,
       dns_seeds: [
         "seed.bitcoin.sipa.be",
         "dnsseed.bluematt.me",
         "dnsseed.bitcoin.dashjr.org",
         "bitseed.xf2.org",
+        "dnsseed.webbtc.com",
       ],
       genesis_hash: "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
       proof_of_work_limit: 0x1d00ffff,
@@ -567,6 +579,7 @@ module Bitcoin
         'mining.bitcoin.cz',
         'blockchain.info',
         'blockexplorer.com',
+        'webbtc.com',
       ],
       checkpoints: {
          11111 => "0000000069e244f73d78e8fd29ba2fd2ed618bd6fa2ee92559f542fdb26e7c1d",
@@ -591,7 +604,10 @@ module Bitcoin
       address_version: "6f",
       p2sh_version: "c4",
       privkey_version: "ef",
+      extended_privkey_version: "04358394",
+      extended_pubkey_version: "043587cf",
       default_port: 18333,
+      bip34_height: 21111,
       dns_seeds: [ ],
       genesis_hash: "00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008",
       proof_of_work_limit: 0x1d07fff8,
@@ -603,7 +619,8 @@ module Bitcoin
   NETWORKS[:regtest] = NETWORKS[:testnet].merge({
       default_port: 18444,
       genesis_hash: "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
-      proof_of_work_limit: (1 << 255) - 1,
+      proof_of_work_limit: 0x207fffff,
+      bip34_height: 0,
     })
 
   NETWORKS[:testnet3] = NETWORKS[:testnet].merge({
@@ -616,7 +633,9 @@ module Bitcoin
         "testnet-seed.bitcoin.schildbach.de",
         "testnet-seed.bitcoin.petertodd.org",
         "testnet-seed.bluematt.me",
+        "dnsseed.test.webbtc.com",
       ],
+      known_nodes: ["test.webbtc.com"],
       checkpoints: {
         # 542 contains invalid transaction
         542 => "0000000083c1f82cf72c6724f7a317325806384b06408bce7a4327f418dfd5ad",
@@ -632,6 +651,8 @@ module Bitcoin
       address_version: "30",
       p2sh_version: "05",
       privkey_version: "b0",
+      extended_privkey_version: "019d9cfe",
+      extended_pubkey_version: "019da462",
       default_port: 9333,
       protocol_version: 70002,
       max_money: 84_000_000 * COIN,
@@ -680,6 +701,8 @@ module Bitcoin
       address_version: "6f",
       p2sh_version: "c4",
       privkey_version: "ef",
+      extended_privkey_version: "0436ef7d",
+      extended_pubkey_version: "0436f6e1",
       default_port: 19333,
       dns_seeds: [
         "testnet-seed.litecointools.com",
@@ -700,6 +723,8 @@ module Bitcoin
       address_version: "1e",
       p2sh_version: "16",
       privkey_version: "9e",
+      extended_privkey_version: "02fac398",
+      extended_pubkey_version: "02facafd",
       default_port: 22556,
       protocol_version: 70003,
       max_money: 100_000_000_000 * COIN,
@@ -757,6 +782,8 @@ module Bitcoin
       address_version: "71",
       p2sh_version: "c4",
       privkey_version: "f1",
+      extended_privkey_version: "0432a243",
+      extended_pubkey_version: "0432a9a8",
       default_port: 44556,
       protocol_version: 70003,
       min_tx_fee: COIN,
@@ -802,11 +829,14 @@ module Bitcoin
       protocol_version: 35000,
       min_tx_fee: 50_000,
       per_dust_fee: true,
-      dns_seeds: [],
+      dns_seeds: [
+        "nmc.seed.quisquis.de",
+        "dnsseed.namecoin.webbtc.com",
+      ],
       genesis_hash: "000000000062b72c5e2ceb45fbc8587e807c155b0da735e6483dfba2f0a9c770",
       known_nodes: [
         "bitcoin.tunl.in",
-        "webbtc.com",
+        "namecoin.webbtc.com",
         "178.32.31.41",
         "78.47.86.43",
         "69.164.206.88",
@@ -824,11 +854,26 @@ module Bitcoin
   NETWORKS[:namecoin_testnet] = NETWORKS[:namecoin].merge({
       magic_head: "\xFA\xBF\xB5\xFE",
       default_port: 18334,
-      genesis_hash: "00000001f8ab0d14bceaeb50d163b0bef15aecf62b87bd5f5c864d37f201db97",
-      known_nodes: ["178.32.31.41"],
-      checkpoints: {
-        0 => "000000000062b72c5e2ceb45fbc8587e807c155b0da735e6483dfba2f0a9c770",
-      }
+      genesis_hash: "00000007199508e34a9ff81e6ec0c477a4cccff2a4767a8eee39c11db367b008",
+      dns_seeds: [
+        "dnsseed.test.namecoin.webbtc.com",
+      ],
+      known_nodes: [
+        "test.namecoin.webbtc.com",
+        "nmctest.net",
+        "192.99.247.234"],
+      checkpoints: { }
+    })
+
+  NETWORKS[:namecoin_regtest] = NETWORKS[:namecoin_testnet].merge({
+      magic_head: "\xFA\xBF\xB5\xDA",
+      default_port: 18445,
+      genesis_hash: "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
+      dns_seeds: [], known_nodes: [],
+      proof_of_work_limit: 0x207fffff,
+      checkpoints: { },
+      address_versions: { pubkey_hash: "6f", script_hash: "c4" },
+      privkey_version: "ef",
     })
 
 end
