@@ -918,3 +918,29 @@ describe "Implements BIP66" do
     run_script_test(script_sig, script_pk, {verify_dersig: true}).should == true
   end
 end
+
+describe "determine input address from sig scripts" do
+  it 'should decode uncompressed pubkeys' do
+    script = Bitcoin::Script.from_string('304502204c22de00f0cb984cea5a12f0a141fbe94848aaf1caac795c27e261e31c6bd8dd022100be78e7a068395f645da0fdc81a37f22ae047983bbad5b435a1c461f40efef94601 047e6028700e75da5d9531a84e50818d9b0a9e1dd69ebd963d2e9beb45ac960f6201893ebecfe1017eedaddbbda522e2ded8dbd38f0fc4b3fba9f1549e9f392d8c')
+    script.sig_is_pubkey?.should == true
+    script.sig_is_multisig?.should == false
+    script.get_sig_pubkey_address.should == '1ECqBZWQhvE6DkMRD2tbPsBMSnSsAoyGR3'
+    script.get_sig_address.should        == '1ECqBZWQhvE6DkMRD2tbPsBMSnSsAoyGR3'
+  end
+
+  it 'should decode compressed pubkeys' do
+    script = Bitcoin::Script.from_string('3044022054c5773bb7764096344d49402286584186063ad7e7cad74f357a2f8f1ce14fc502202d4960b6107bb67eacb5f445cfda74dd0e485c9de8c142a560c9f59c84c4d22f01 03dfc106add897d45d994ab775deca77c0aa2f95b611a8eec9cbfb5b824b133288')
+    script.sig_is_pubkey?.should == true
+    script.sig_is_multisig?.should == false
+    script.get_sig_pubkey_address.should == '1ASXPPhBcCSUN6R5RgBDyF7T368mi2Tgdq'
+    script.get_sig_address.should        == '1ASXPPhBcCSUN6R5RgBDyF7T368mi2Tgdq'
+  end
+
+  it 'should decode multisig scripts' do
+    script = Bitcoin::Script.from_string('0 304402205906c56c05ffde1c8f5aa4c452877029b39e52c4734b79d24d0cacec8f94f35a022062559ce70746da8fa4d20502be3224317e40f0a5508fdce20e86f07707a658a001 512103deed9c2a6f4cf9f03b4acc07edc5e37009e576053fdf49b91475ac0f4c2b151151ae')
+    script.sig_is_pubkey?.should == false
+    script.sig_is_multisig?.should == true
+    script.get_sig_multisig_address.should == '38LMUJUz9924hiJNQARzLVeR7A32GF447u'
+    script.get_sig_address.should          == '38LMUJUz9924hiJNQARzLVeR7A32GF447u'
+  end
+end

@@ -485,14 +485,6 @@ class Bitcoin::Script
     script_pubkey = binary_from_string(script)
   end
 
-  def get_sig_address
-    # check for a standard pubkey scriptsig
-    return nil if @chunks.size != 2
-    return nil if @chunks[1].size != 33
-    # the pubkey the second value
-    Bitcoin.pubkey_to_address( @chunks[1].bth )
-  end
-
   # pay_to_script_hash: https://en.bitcoin.it/wiki/BIP_0016
   #
   # <sig> {<pub> OP_CHECKSIG} | OP_HASH160 <script_hash> OP_EQUAL
@@ -647,11 +639,12 @@ class Bitcoin::Script
     Bitcoin.pubkey_to_address(get_pubkey)
   end
 
-  # get the hash160 for this hash160 or pubkey script
+  # get the hash160 for this hash160, pubkey, p2sh, or multisig script
   def get_hash160
-    return @chunks[2..-3][0].unpack("H*")[0]  if is_hash160?
-    return @chunks[-2].unpack("H*")[0]        if is_p2sh?
-    return Bitcoin.hash160(get_pubkey)        if is_pubkey?
+    return @chunks[2..-3][0].unpack("H*")[0]       if is_hash160?
+    return @chunks[-2].unpack("H*")[0]             if is_p2sh?
+    return Bitcoin.hash160(get_pubkey)             if is_pubkey?
+    return Bitcoin.hash160( @raw.unpack("H*")[0] ) if is_multisig?
   end
 
   # get the hash160 address for this hash160 script
@@ -697,6 +690,39 @@ class Bitcoin::Script
   def get_address
     addrs = get_addresses
     addrs.is_a?(Array) ? addrs[0] : addrs
+  end
+
+  ## NOTE: sig_* functions only work with signature (tx input) scripts
+
+  # standard is two chunks with second being 33 byte compressed pubkey or a 65 byte uncompressed pubkey
+  def sig_is_pubkey?
+    return true if @chunks.size == 2 && ( @chunks[1].size == 33 || @chunks[1].size == 65 )
+    false
+  end
+
+  # check the last chunk for being a multisig script
+  def sig_is_multisig?
+    return true if @chunks.size >= 3 && get_sig_multisig_script.is_multisig?
+    false
+  end
+
+  def get_sig_pubkey_address
+    Bitcoin.pubkey_to_address( @chunks[1].bth )
+  end
+
+  def get_sig_multisig_script
+    Bitcoin::Script.new( @chunks[-1] )
+  end
+
+  # get the p2sh addresses for this multisig script
+  def get_sig_multisig_address
+    get_sig_multisig_script.get_p2sh_address
+  end
+
+  def get_sig_address
+    return get_sig_pubkey_address   if sig_is_pubkey?
+    return get_sig_multisig_address if sig_is_multisig?
+    nil
   end
 
   # generate pubkey tx script for given +pubkey+. returns a raw binary script of the form:
