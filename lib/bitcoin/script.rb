@@ -702,7 +702,11 @@ class Bitcoin::Script
 
   # check the last chunk for being a multisig script
   def sig_is_multisig?
-    return true if @chunks.size >= 3 && get_sig_multisig_script.is_multisig?
+    begin
+      return true if @chunks.size >= 3 && get_sig_multisig_script.is_multisig?
+    rescue StandardError
+      # we weren't able to process this as a multisig script (see testnet block #577828)
+    end
     false
   end
 
